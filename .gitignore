@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Environment secrets
+.env
+.env.*
+
+# Keep the example configuration
+!.env.example
+
+# Frontend
+node_modules/
+dist/
+
+# Development
+.pytest_cache/
+
+# Databases
+*.db
+*.sqlite3
+
+# Local Reference & Temp Files
+old project/
+scratch/
+*.pdf
+generate_audit_pdf.py
+
