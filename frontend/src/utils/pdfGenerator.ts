@@ -1,3 +1,4 @@
+
 import { jsPDF } from 'jspdf';
 import type { CalculationResult } from '../types/cad';
 import { WINDOW_MODELS, type WindowModelId } from './slidingCalculations';
@@ -13,27 +14,14 @@ export interface PDFExportOptions {
   isTamil?: boolean;
 }
 
-/**
- * Creative, High-Definition Vector PDF Engine for LS INTERIORS.
- * Built from first principles for Tamil Nadu UPVC & Aluminum workshops.
- * Features:
- * - A4 Landscape geometry (297 x 210 mm) for comprehensive fabrication schedules.
- * - Exact 14-column layout matching workshop calculation grid:
- *   [S.No] [Height x Width Inches] [Outer Frame HxW mm] [Model Details: Name | Material]
- *   [Sash Cut: H | W | H Pcs | W Pcs] [Interlock mm] [Glass Cut: H | W | Qty] [Glass Type]
- * - Two-tier grouped table headers.
- * - Bold, high-contrast dark ink for workshop readability.
- * - Zero vertical whitespace gap - table starts immediately beneath the header.
- */
-
 const A4_LANDSCAPE_H = 210;
 const MARGIN_LEFT = 8;
-const TABLE_WIDTH = 281; // 297 - 16
-const ROWS_PER_PAGE_LANDSCAPE = 12;
+const TABLE_WIDTH = 281;
+const ROWS_PER_PAGE_LANDSCAPE = 14;
 
 const A4_PORTRAIT_H = 297;
 const MARGIN_LEFT_PORTRAIT = 7;
-const TABLE_WIDTH_PORTRAIT = 196; // 210 - 14
+const TABLE_WIDTH_PORTRAIT = 196;
 const ROWS_PER_PAGE_PORTRAIT = 14;
 
 interface ColumnDef {
@@ -43,8 +31,38 @@ interface ColumnDef {
   align: 'left' | 'center' | 'right';
 }
 
+type WorkshopColumnKey =
+  | 'sNo'
+  | 'siteDim'
+  | 'outerFrame'
+  | 'modelName'
+  | 'type'
+  | 'material'
+  | 'sashH'
+  | 'sashW'
+  | 'sashHPcs'
+  | 'sashWPcs'
+  | 'mullionH'
+  | 'mullionQty'
+  | 'interlock'
+  | 'glassH'
+  | 'glassW'
+  | 'glassQty'
+  | 'glassType'
+  | 'clientFill'
+  | 'mesh';
+
+interface WorkshopColumn {
+  key: WorkshopColumnKey;
+  width: number;
+  header: string;
+  subHeader?: string;
+  group?: string;
+}
+
 function cleanAscii(str: string | number | undefined | null): string {
   if (str === undefined || str === null) return '';
+
   return String(str)
     .replace(/[—–]/g, '-')
     .replace(/×/g, 'x')
@@ -52,17 +70,35 @@ function cleanAscii(str: string | number | undefined | null): string {
     .replace(/°/g, ' deg')
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
-    .replace(/[^\x00-\x7F]/g, '')
+    .split('')
+    .filter((char) => char.charCodeAt(0) <= 127)
+    .join('')
     .trim();
 }
 
-// High-contrast ink palette
-const INK_DEEP = [15, 23, 42]; // Slate 900
-const INK_SECONDARY = [71, 85, 105]; // Slate 600
-const INK_HEADER_BG = [241, 245, 249]; // Slate 100
-const INK_ACCENT = [29, 78, 216]; // Blue 700
-const INK_GREEN = [4, 120, 87]; // Emerald 700
-const INK_SKY = [2, 132, 199]; // Sky 600
+const INK_DEEP = [15, 23, 42];
+const INK_SECONDARY = [71, 85, 105];
+const INK_HEADER_BG = [241, 245, 249];
+const INK_ACCENT = [29, 78, 216];
+const INK_GREEN = [4, 120, 87];
+const INK_SKY = [2, 132, 199];
+
+function getModelDefinition(item: CalculationResult) {
+  return (
+    WINDOW_MODELS.find(
+      (model) => model.id === (item.input.modelId as WindowModelId)
+    ) ||
+    WINDOW_MODELS.find((model) => model.name === item.ruleProfileName)
+  );
+}
+
+function isMeshModel(item: CalculationResult): boolean {
+  return item.input.modelId === '58-2.5' || item.input.modelId === '85-2.5';
+}
+
+function isMullionModel(item: CalculationResult): boolean {
+  return item.input.modelId === 'open-double' || item.input.modelId === 'open-triple';
+}
 
 export function generateWorkshopOrderPDF(
   results: CalculationResult[],
@@ -76,398 +112,582 @@ export function generateWorkshopOrderPDF(
   });
 
   const shopName = cleanAscii(options.shopName || 'LS INTERIORS');
-  const customer = cleanAscii(options.customerName || 'General Order');
+  const customer = cleanAscii(options.customerName || '');
   const phone = cleanAscii(options.customerPhone || '');
   const project = cleanAscii(options.projectName || '');
   const projectSerial = cleanAscii(options.projectSerial || '');
   const dateStr = cleanAscii(options.date || new Date().toLocaleDateString('en-GB'));
 
-  const totalPages = Math.max(1, Math.ceil(results.length / ROWS_PER_PAGE_LANDSCAPE));
+  const totalPages = Math.max(
+    1,
+    Math.ceil(results.length / ROWS_PER_PAGE_LANDSCAPE)
+  );
 
-  // Column definitions (Sum of widths = 281 mm)
-  const COL_WIDTHS = {
-    sNo: 14,
-    siteDim: 28,
-    outerFrame: 28,
-    modelName: 46,
-    material: 16,
-    sashH: 16,
-    sashW: 16,
-    sashHPcs: 13,
-    sashWPcs: 13,
-    interlock: 18,
-    glassH: 16,
-    glassW: 16,
-    glassQty: 15,
-    glassType: 26,
-  };
+  // Conditional columns are included only when at least one selected
+  // window in this order requires that component.
+  const showMeshColumn = results.some(isMeshModel);
+  const showMullionColumns = results.some(isMullionModel);
+
+  // The widths are scaled proportionally to keep the table exactly
+  // within the available A4 landscape width.
+  const baseColumns: WorkshopColumn[] = [
+    { key: 'sNo', header: 'Si.No.', width: 10 },
+    { key: 'siteDim', header: 'Height x Width', subHeader: 'Inches', width: 23 },
+    { key: 'outerFrame', header: 'Outer Frame', subHeader: 'H x W (mm)', width: 22 },
+    { key: 'modelName', header: 'Model Name', width: 30 },
+    { key: 'type', header: 'Type', width: 24 },
+    { key: 'material', header: 'Material', subHeader: '(mm)', width: 12 },
+
+    { key: 'sashH', header: 'H', width: 13, group: 'Sash Cut (mm)' },
+    { key: 'sashW', header: 'W', width: 13, group: 'Sash Cut (mm)' },
+    { key: 'sashHPcs', header: 'H Pcs', width: 9, group: 'Sash Cut (mm)' },
+    { key: 'sashWPcs', header: 'W Pcs', width: 9, group: 'Sash Cut (mm)' },
+
+    ...(showMullionColumns
+      ? [
+          {
+            key: 'mullionH' as const,
+            header: 'H - 6',
+            width: 13,
+            group: 'Mullion (mm)',
+          },
+          {
+            key: 'mullionQty' as const,
+            header: 'No.Pcs',
+            width: 8,
+            group: 'Mullion (mm)',
+          },
+        ]
+      : []),
+
+    { key: 'interlock', header: 'Interlock', subHeader: '(mm)', width: 12 },
+
+    { key: 'glassH', header: 'H', width: 12, group: 'Glass Cut (mm)' },
+    { key: 'glassW', header: 'W', width: 12, group: 'Glass Cut (mm)' },
+    { key: 'glassQty', header: 'No.Pcs', width: 8, group: 'Glass Cut (mm)' },
+
+    { key: 'glassType', header: 'Glass Type', width: 15 },
+    { key: 'clientFill', header: 'Client Fill', width: 12 },
+
+    ...(showMeshColumn
+      ? [
+          {
+            key: 'mesh' as const,
+            header: '2.5T Mesh',
+            subHeader: 'H x W (mm)',
+            width: 20,
+          },
+        ]
+      : []),
+  ];
+
+  const totalBaseWidth = baseColumns.reduce((sum, column) => sum + column.width, 0);
+  const widthScale = TABLE_WIDTH / totalBaseWidth;
+
+  const columns = baseColumns.map((column) => ({
+    ...column,
+    width: column.width * widthScale,
+  }));
+
+  const columnPositions = new Map<WorkshopColumnKey, number>();
+  let runningX = MARGIN_LEFT;
+
+  columns.forEach((column) => {
+    columnPositions.set(column.key, runningX);
+    runningX += column.width;
+  });
 
   for (let page = 0; page < totalPages; page++) {
     if (page > 0) doc.addPage();
 
     const startIdx = page * ROWS_PER_PAGE_LANDSCAPE;
-    const pageRows = results.slice(startIdx, startIdx + ROWS_PER_PAGE_LANDSCAPE);
+    const pageRows = results.slice(
+      startIdx,
+      startIdx + ROWS_PER_PAGE_LANDSCAPE
+    );
 
-    // 1. TOP HEADER BLOCK (y = 8 to 22 mm)
-    doc.setDrawColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.setLineWidth(0.5);
-    doc.rect(MARGIN_LEFT, 8, TABLE_WIDTH, 14);
+    // --------------------------------------------------
+    // 1. WORKSHOP HEADER
+    // --------------------------------------------------
 
-    // Main Title
     doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
+
+    doc.text(
+      `Customer Name : ${customer || '.....................................'}`,
+      MARGIN_LEFT,
+      9
+    );
+
+    doc.text(
+      `Customer Phone : ${phone || '.....................................'}`,
+      MARGIN_LEFT + 100,
+      9
+    );
+
     doc.setFontSize(13);
     doc.setTextColor(INK_ACCENT[0], INK_ACCENT[1], INK_ACCENT[2]);
-    doc.text(`${shopName} - OFFICIAL WORKSHOP FABRICATION ORDER`, MARGIN_LEFT + 3, 13.5);
+    doc.text(shopName, MARGIN_LEFT + TABLE_WIDTH / 2, 16, {
+      align: 'center',
+    });
 
-    // Prominent Project Serial Number Badge
-    if (projectSerial) {
-      doc.setFillColor(INK_ACCENT[0], INK_ACCENT[1], INK_ACCENT[2]);
-      doc.roundedRect(MARGIN_LEFT + TABLE_WIDTH - 32, 9.5, 29, 6.2, 1, 1, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(255, 255, 255);
-      doc.text(projectSerial, MARGIN_LEFT + TABLE_WIDTH - 17.5, 13.9, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
+
+    doc.text(`Date : ${dateStr}`, MARGIN_LEFT + TABLE_WIDTH, 9, {
+      align: 'right',
+    });
+
+    if (project || projectSerial) {
+      const projectText = [
+        projectSerial ? `Project No: ${projectSerial}` : '',
+        project ? `Project: ${project}` : '',
+      ]
+        .filter(Boolean)
+        .join(' | ');
+
+      doc.text(projectText, MARGIN_LEFT, 19);
     }
 
-    // Subtitle
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
-    doc.text('High-Precision Cutting, Sash, Interlock & Glass Specification Schedule', MARGIN_LEFT + 3, 17);
-
-    // Metadata Right & Left
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
+    doc.setFontSize(11);
     doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    const projPart = projectSerial ? `[${projectSerial}] ${project}` : project;
-    const customerMeta = `Customer: ${customer}${phone ? ` (${phone})` : ''}${projPart ? ` | Project: ${projPart}` : ''}`;
-    doc.text(customerMeta, MARGIN_LEFT + 3, 20.8);
 
-    const rightMeta = `Date: ${dateStr}  |  Total Windows: ${results.length}  |  Page ${page + 1} of ${totalPages}`;
-    doc.text(rightMeta, MARGIN_LEFT + TABLE_WIDTH - 3, 20.8, { align: 'right' });
+    doc.text(
+      `WORKSHOP ORDER SHEET (Pg ${page + 1}/${totalPages})`,
+      MARGIN_LEFT + TABLE_WIDTH / 2,
+      24,
+      { align: 'center' }
+    );
 
-    // 2. TWO-TIER TABLE HEADER (y = 23 to 36.5 mm)
-    const thY1 = 23;
-    const thH1 = 7;
-    const thY2 = 30;
-    const thH2 = 6.5;
-    const thTotalH = thH1 + thH2; // 13.5 mm
+    // --------------------------------------------------
+    // 2. DYNAMIC TWO-TIER TABLE HEADER
+    // --------------------------------------------------
 
-    doc.setFillColor(INK_HEADER_BG[0], INK_HEADER_BG[1], INK_HEADER_BG[2]);
+    const headerY = 27;
+    const headerTopH = 7;
+    const headerBottomH = 6.5;
+    const headerTotalH = headerTopH + headerBottomH;
+
+    doc.setFillColor(
+      INK_HEADER_BG[0],
+      INK_HEADER_BG[1],
+      INK_HEADER_BG[2]
+    );
+
     doc.setDrawColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.setLineWidth(0.4);
+    doc.setLineWidth(0.35);
 
-    // Tier 1 background
-    doc.rect(MARGIN_LEFT, thY1, TABLE_WIDTH, thTotalH, 'FD');
+    doc.rect(
+      MARGIN_LEFT,
+      headerY,
+      TABLE_WIDTH,
+      headerTotalH,
+      'FD'
+    );
 
-    // Tier 1 Groups & Rowspan Headers:
-    let curX = MARGIN_LEFT;
+    let columnIndex = 0;
 
-    // Col 1: S.No (Rowspan 2)
-    doc.rect(curX, thY1, COL_WIDTHS.sNo, thTotalH);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.text('S.No', curX + COL_WIDTHS.sNo / 2, thY1 + 8, { align: 'center' });
-    curX += COL_WIDTHS.sNo;
+    while (columnIndex < columns.length) {
+      const column = columns[columnIndex];
+      const x = columnPositions.get(column.key)!;
 
-    // Col 2: Height x Width (Enter in Inches) (Rowspan 2)
-    doc.rect(curX, thY1, COL_WIDTHS.siteDim, thTotalH);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.text('Height x Width', curX + COL_WIDTHS.siteDim / 2, thY1 + 5.5, { align: 'center' });
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
-    doc.text('Enter in Inches', curX + COL_WIDTHS.siteDim / 2, thY1 + 9.5, { align: 'center' });
-    curX += COL_WIDTHS.siteDim;
+      if (column.group) {
+        let groupWidth = 0;
+        let nextIndex = columnIndex;
 
-    // Col 3: Outer Frame (mm) (H x W) (Rowspan 2)
-    doc.rect(curX, thY1, COL_WIDTHS.outerFrame, thTotalH);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.text('Outer Frame (mm)', curX + COL_WIDTHS.outerFrame / 2, thY1 + 5.5, { align: 'center' });
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
-    doc.text('(H x W)', curX + COL_WIDTHS.outerFrame / 2, thY1 + 9.5, { align: 'center' });
-    curX += COL_WIDTHS.outerFrame;
+        while (
+          nextIndex < columns.length &&
+          columns[nextIndex].group === column.group
+        ) {
+          groupWidth += columns[nextIndex].width;
+          nextIndex++;
+        }
 
-    // Col 4 & 5: Model Details (Colspan 2)
-    const modelGroupW = COL_WIDTHS.modelName + COL_WIDTHS.material;
-    doc.rect(curX, thY1, modelGroupW, thH1);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.text('Model Details', curX + modelGroupW / 2, thY1 + 5, { align: 'center' });
+        doc.rect(x, headerY, groupWidth, headerTopH);
 
-    // Sub-tier Model Name & Material
-    doc.rect(curX, thY2, COL_WIDTHS.modelName, thH2);
-    doc.setFontSize(7);
-    doc.text('Model Name', curX + 3, thY2 + 4.5);
-    doc.rect(curX + COL_WIDTHS.modelName, thY2, COL_WIDTHS.material, thH2);
-    doc.text('Material', curX + COL_WIDTHS.modelName + COL_WIDTHS.material / 2, thY2 + 4.5, { align: 'center' });
-    curX += modelGroupW;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
 
-    // Col 6, 7, 8, 9: Sash Cut (mm) (Colspan 4)
-    const sashGroupW = COL_WIDTHS.sashH + COL_WIDTHS.sashW + COL_WIDTHS.sashHPcs + COL_WIDTHS.sashWPcs;
-    doc.rect(curX, thY1, sashGroupW, thH1);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.text('Sash Cut (mm)', curX + sashGroupW / 2, thY1 + 5, { align: 'center' });
+        doc.text(
+          column.group,
+          x + groupWidth / 2,
+          headerY + 4.8,
+          { align: 'center' }
+        );
 
-    // Sub-tier Sash H, W, H Pcs, W Pcs
-    let sashSubX = curX;
-    doc.rect(sashSubX, thY2, COL_WIDTHS.sashH, thH2);
-    doc.setFontSize(7);
-    doc.text('H', sashSubX + COL_WIDTHS.sashH / 2, thY2 + 4.5, { align: 'center' });
-    sashSubX += COL_WIDTHS.sashH;
+        for (let i = columnIndex; i < nextIndex; i++) {
+          const subColumn = columns[i];
+          const subX = columnPositions.get(subColumn.key)!;
 
-    doc.rect(sashSubX, thY2, COL_WIDTHS.sashW, thH2);
-    doc.text('W', sashSubX + COL_WIDTHS.sashW / 2, thY2 + 4.5, { align: 'center' });
-    sashSubX += COL_WIDTHS.sashW;
+          doc.rect(
+            subX,
+            headerY + headerTopH,
+            subColumn.width,
+            headerBottomH
+          );
 
-    doc.rect(sashSubX, thY2, COL_WIDTHS.sashHPcs, thH2);
-    doc.text('H Pcs', sashSubX + COL_WIDTHS.sashHPcs / 2, thY2 + 4.5, { align: 'center' });
-    sashSubX += COL_WIDTHS.sashHPcs;
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(6.5);
 
-    doc.rect(sashSubX, thY2, COL_WIDTHS.sashWPcs, thH2);
-    doc.text('W Pcs', sashSubX + COL_WIDTHS.sashWPcs / 2, thY2 + 4.5, { align: 'center' });
-    curX += sashGroupW;
+          doc.text(
+            subColumn.header,
+            subX + subColumn.width / 2,
+            headerY + headerTopH + 4.3,
+            { align: 'center' }
+          );
+        }
 
-    // Col 10: Interlock (mm) (Rowspan 2)
-    doc.rect(curX, thY1, COL_WIDTHS.interlock, thTotalH);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.text('Interlock', curX + COL_WIDTHS.interlock / 2, thY1 + 5.5, { align: 'center' });
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
-    doc.text('(mm)', curX + COL_WIDTHS.interlock / 2, thY1 + 9.5, { align: 'center' });
-    curX += COL_WIDTHS.interlock;
+        columnIndex = nextIndex;
+      } else {
+        doc.rect(x, headerY, column.width, headerTotalH);
 
-    // Col 11, 12, 13: Glass Cut (mm) (Colspan 3)
-    const glassGroupW = COL_WIDTHS.glassH + COL_WIDTHS.glassW + COL_WIDTHS.glassQty;
-    doc.rect(curX, thY1, glassGroupW, thH1);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.text('Glass Cut (mm)', curX + glassGroupW / 2, thY1 + 5, { align: 'center' });
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.8);
+        doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
 
-    // Sub-tier Glass H, W, Qty
-    let glassSubX = curX;
-    doc.rect(glassSubX, thY2, COL_WIDTHS.glassH, thH2);
-    doc.setFontSize(7);
-    doc.text('H', glassSubX + COL_WIDTHS.glassH / 2, thY2 + 4.5, { align: 'center' });
-    glassSubX += COL_WIDTHS.glassH;
+        const headerText = column.header;
+        const subHeaderText = column.subHeader || '';
 
-    doc.rect(glassSubX, thY2, COL_WIDTHS.glassW, thH2);
-    doc.text('W', glassSubX + COL_WIDTHS.glassW / 2, thY2 + 4.5, { align: 'center' });
-    glassSubX += COL_WIDTHS.glassW;
+        if (subHeaderText) {
+          doc.text(
+            headerText,
+            x + column.width / 2,
+            headerY + 5,
+            { align: 'center' }
+          );
 
-    doc.rect(glassSubX, thY2, COL_WIDTHS.glassQty, thH2);
-    doc.text('Qty', glassSubX + COL_WIDTHS.glassQty / 2, thY2 + 4.5, { align: 'center' });
-    curX += glassGroupW;
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(5.8);
+          doc.setTextColor(
+            INK_SECONDARY[0],
+            INK_SECONDARY[1],
+            INK_SECONDARY[2]
+          );
 
-    // Col 14: Glass Type (Rowspan 2)
-    doc.rect(curX, thY1, COL_WIDTHS.glassType, thTotalH);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.text('Glass Type', curX + COL_WIDTHS.glassType / 2, thY1 + 8, { align: 'center' });
+          doc.text(
+            subHeaderText,
+            x + column.width / 2,
+            headerY + 10.5,
+            { align: 'center' }
+          );
+        } else {
+          const wrappedHeader = doc.splitTextToSize(
+            headerText,
+            column.width - 1.5
+          );
 
-    // 3. TABLE BODY ROWS (Starts immediately at y = 36.5 mm, NO void gap!)
-    const rowHeight = 11.2;
-    let rowY = thY1 + thTotalH;
+          doc.text(
+            wrappedHeader,
+            x + column.width / 2,
+            headerY + (wrappedHeader.length > 1 ? 5 : 8),
+            { align: 'center' }
+          );
+        }
 
-    for (let r = 0; r < ROWS_PER_PAGE_LANDSCAPE; r++) {
-      const item = pageRows[r];
+        columnIndex++;
+      }
+    }
 
-      // Model identification background fill (exact pastel matching measurement section)
+    // --------------------------------------------------
+    // 3. TABLE BODY
+    // --------------------------------------------------
+
+    const rowHeight = 10.5;
+    let rowY = headerY + headerTotalH;
+
+    for (let rowIndex = 0; rowIndex < ROWS_PER_PAGE_LANDSCAPE; rowIndex++) {
+      const item = pageRows[rowIndex];
+
       if (item) {
-        const hex = getModelColor(item.input.modelId, item.input.identificationColor);
+        const hex = getModelColor(
+          item.input.modelId,
+          item.input.identificationColor
+        );
+
         const rgb = hexToRgb(hex);
+
         doc.setFillColor(rgb[0], rgb[1], rgb[2]);
         doc.rect(MARGIN_LEFT, rowY, TABLE_WIDTH, rowHeight, 'F');
 
-        // Elegant solid identification indicator on S.No column left edge
         const darker = darkenRgb(rgb, 0.4);
+
         doc.setFillColor(darker[0], darker[1], darker[2]);
         doc.rect(MARGIN_LEFT, rowY, 2.5, rowHeight, 'F');
-      } else if (r % 2 === 1) {
+      } else if (rowIndex % 2 === 1) {
         doc.setFillColor(248, 250, 252);
         doc.rect(MARGIN_LEFT, rowY, TABLE_WIDTH, rowHeight, 'F');
       }
 
-      // Border for entire row
       doc.setDrawColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-      doc.setLineWidth(0.35);
+      doc.setLineWidth(0.3);
+
       doc.rect(MARGIN_LEFT, rowY, TABLE_WIDTH, rowHeight);
+
+      // Draw every dynamic column divider, including empty rows.
+      columns.forEach((column) => {
+        const x = columnPositions.get(column.key)!;
+
+        if (x > MARGIN_LEFT) {
+          doc.line(x, rowY, x, rowY + rowHeight);
+        }
+      });
 
       if (item) {
         const centerY = rowY + rowHeight / 2;
-        let cX = MARGIN_LEFT;
+        const modelDef = getModelDefinition(item);
 
-        // Model lookup
-        const modelDef = WINDOW_MODELS.find(
-          (m) => m.id === (item.input.modelId as WindowModelId)
-        ) || WINDOW_MODELS.find((m) => m.name === item.ruleProfileName) || WINDOW_MODELS[0];
+        const cellText = (
+          key: WorkshopColumnKey,
+          value: string,
+          fontSize = 7,
+          bold = false,
+          color = INK_DEEP
+        ) => {
+          const column = columns.find((entry) => entry.key === key);
+          if (!column) return;
 
-        const material = modelDef?.material || `${item.frame.profileDepthMM} mm`;
+          const x = columnPositions.get(key)!;
 
-        // 1. S.No / Window Label
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9.5);
-        doc.setTextColor(INK_ACCENT[0], INK_ACCENT[1], INK_ACCENT[2]);
-        const label = item.input.windowLabel || `W${startIdx + r + 1}`;
-        doc.text(label, cX + COL_WIDTHS.sNo / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.sNo;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
+          doc.setFont('helvetica', bold ? 'bold' : 'normal');
+          doc.setFontSize(fontSize);
+          doc.setTextColor(color[0], color[1], color[2]);
 
-        // 2. Height x Width (Inches)
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8);
-        doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-        const hInStr = item.input.heightInch ? item.input.heightInch.toFixed(4) : (item.convertedHeightMM / 25.4).toFixed(4);
-        const wInStr = item.input.widthInch ? item.input.widthInch.toFixed(4) : (item.convertedWidthMM / 25.4).toFixed(4);
-        doc.text(`${hInStr} x`, cX + COL_WIDTHS.siteDim / 2, centerY - 1.5, { align: 'center' });
-        doc.text(`${wInStr}"`, cX + COL_WIDTHS.siteDim / 2, centerY + 3.2, { align: 'center' });
-        cX += COL_WIDTHS.siteDim;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
+          if (value) {
+            const wrapped = doc.splitTextToSize(
+              value,
+              column.width - 1.5
+            );
 
-        // 3. Outer Frame (mm)
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9.5);
-        doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-        doc.text(`${item.convertedHeightMM} x ${item.convertedWidthMM}`, cX + COL_WIDTHS.outerFrame / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.outerFrame;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
+            const lines = wrapped.slice(0, 2);
+            const lineHeight = 2.8;
+            const startY =
+              centerY - ((lines.length - 1) * lineHeight) / 2 + 1;
 
-        // 4. Model Name
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(7.5);
-        doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-        let modelTitle = cleanAscii(modelDef?.name || item.ruleProfileName || '');
-        if (modelTitle.length > 26) {
-          modelTitle = modelTitle.substring(0, 24) + '..';
-        }
-        doc.text(modelTitle, cX + 2, centerY + 1);
-        cX += COL_WIDTHS.modelName;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 5. Material
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7.5);
-        doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
-        doc.text(cleanAscii(material), cX + COL_WIDTHS.material / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.material;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 6. Sash Cut H
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(INK_GREEN[0], INK_GREEN[1], INK_GREEN[2]);
-        const sashH = item.panel.heightMM > 0 ? `${item.panel.heightMM}` : '-';
-        doc.text(sashH, cX + COL_WIDTHS.sashH / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.sashH;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 7. Sash Cut W
-        const sashW = item.panel.widthMM > 0 ? `${item.panel.widthMM}` : '-';
-        doc.text(sashW, cX + COL_WIDTHS.sashW / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.sashW;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 8. Sash H Pcs
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8);
-        doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-        const sashHPcs = item.panel.heightMM > 0 ? String(item.panel.verticalPieces || (item.panel.count ? item.panel.count * 2 : 2)) : '-';
-        doc.text(sashHPcs, cX + COL_WIDTHS.sashHPcs / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.sashHPcs;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 9. Sash W Pcs
-        const sashWPcs = item.panel.widthMM > 0 ? String(item.panel.horizontalPieces || (item.panel.count ? item.panel.count * 2 : 2)) : '-';
-        doc.text(sashWPcs, cX + COL_WIDTHS.sashWPcs / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.sashWPcs;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 10. Interlock (mm)
-        const interlockStr = item.interlockMM ? `${item.interlockMM}` : '-';
-        doc.text(interlockStr, cX + COL_WIDTHS.interlock / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.interlock;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 11. Glass Cut H
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(INK_SKY[0], INK_SKY[1], INK_SKY[2]);
-        const glassH = item.mirror && item.mirror.count > 0 && item.mirror.heightMM > 0 ? `${item.mirror.heightMM}` : '-';
-        doc.text(glassH, cX + COL_WIDTHS.glassH / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.glassH;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 12. Glass Cut W
-        const glassW = item.mirror && item.mirror.count > 0 && item.mirror.widthMM > 0 ? `${item.mirror.widthMM}` : '-';
-        doc.text(glassW, cX + COL_WIDTHS.glassW / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.glassW;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 13. Glass Qty
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8);
-        doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-        const glassQty = item.mirror && item.mirror.count > 0 ? `${item.mirror.count} pcs` : '-';
-        doc.text(glassQty, cX + COL_WIDTHS.glassQty / 2, centerY + 1, { align: 'center' });
-        cX += COL_WIDTHS.glassQty;
-        doc.line(cX, rowY, cX, rowY + rowHeight);
-
-        // 14. Glass Type
-        const glassTypeStr = cleanAscii(item.mirror?.glassType || item.input.glassType || 'Clear 5mm');
-        doc.setFontSize(7.5);
-        doc.text(glassTypeStr.substring(0, 16), cX + COL_WIDTHS.glassType / 2, centerY + 1, { align: 'center' });
-      } else {
-        // Draw empty cell dividers for clean engineering worksheet structure
-        let cX = MARGIN_LEFT;
-        Object.values(COL_WIDTHS).forEach((w, idx) => {
-          if (idx > 0) {
-            doc.line(cX, rowY, cX, rowY + rowHeight);
+            doc.text(lines, x + column.width / 2, startY, {
+              align: 'center',
+              lineHeightFactor: 1,
+            });
           }
-          cX += w;
-        });
+        };
+
+        const label =
+          item.input.windowLabel || `W${startIdx + rowIndex + 1}`;
+
+        const heightInches = (
+          item.input.heightInch ||
+          item.convertedHeightMM / 25.4
+        ).toFixed(2);
+
+        const widthInches = (
+          item.input.widthInch ||
+          item.convertedWidthMM / 25.4
+        ).toFixed(2);
+
+        const modelName = cleanAscii(modelDef?.name || item.ruleProfileName || '');
+        const modelType = cleanAscii(modelDef?.shortCode || item.input.modelId || '');
+        const material = cleanAscii(
+          modelDef?.material || `${item.frame.profileDepthMM} mm`
+        );
+
+        cellText('sNo', label, 7.5, true, INK_ACCENT);
+
+        cellText(
+          'siteDim',
+          `${heightInches}" x ${widthInches}"`,
+          6.5
+        );
+
+        cellText(
+          'outerFrame',
+          `${item.convertedHeightMM} x ${item.convertedWidthMM}`,
+          6.5,
+          true
+        );
+
+        cellText('modelName', modelName, 6.2, true);
+        cellText('type', modelType, 6.5, true);
+        cellText('material', material, 6.5);
+
+        // Sash cut measurements and piece counts.
+        const sashHeight =
+          item.panel.heightMM > 0 ? String(item.panel.heightMM) : '';
+
+        const sashWidth =
+          item.panel.widthMM > 0 ? String(item.panel.widthMM) : '';
+
+        const sashHeightPieces =
+          item.panel.heightMM > 0
+            ? String(
+                item.panel.verticalPieces ||
+                  (item.panel.count ? item.panel.count * 2 : 2)
+              )
+            : '';
+
+        const sashWidthPieces =
+          item.panel.widthMM > 0
+            ? String(
+                item.panel.horizontalPieces ||
+                  (item.panel.count ? item.panel.count * 2 : 2)
+              )
+            : '';
+
+        cellText('sashH', sashHeight, 7.5, true, INK_GREEN);
+        cellText('sashW', sashWidth, 7.5, true, INK_GREEN);
+        cellText('sashHPcs', sashHeightPieces, 7);
+        cellText('sashWPcs', sashWidthPieces, 7);
+
+        // Mullion: only Open Double and Open Triple use this column.
+        if (showMullionColumns && isMullionModel(item)) {
+          const mullionLength =
+            item.mullionMM ?? item.frame.mullionCutMM ?? null;
+
+          const mullionPieces =
+            item.input.modelId === 'open-triple' ? 2 : 1;
+
+          cellText(
+            'mullionH',
+            mullionLength && mullionLength > 0
+              ? String(mullionLength)
+              : '',
+            7.5,
+            true,
+            INK_GREEN
+          );
+
+          cellText(
+            'mullionQty',
+            mullionLength && mullionLength > 0
+              ? String(mullionPieces)
+              : '',
+            7
+          );
+        }
+
+        // Interlock.
+        cellText(
+          'interlock',
+          item.interlockMM ? String(item.interlockMM) : '',
+          7
+        );
+
+        // Glass cut.
+        const hasGlass =
+          Boolean(item.mirror) &&
+          item.mirror.count > 0 &&
+          item.mirror.heightMM > 0 &&
+          item.mirror.widthMM > 0;
+
+        cellText(
+          'glassH',
+          hasGlass ? String(item.mirror.heightMM) : '',
+          7.5,
+          true,
+          INK_SKY
+        );
+
+        cellText(
+          'glassW',
+          hasGlass ? String(item.mirror.widthMM) : '',
+          7.5,
+          true,
+          INK_SKY
+        );
+
+        cellText(
+          'glassQty',
+          hasGlass ? String(item.mirror.count) : '',
+          7
+        );
+
+        // Glass Type remains blank unless a value is supplied.
+        const glassType = cleanAscii(
+          item.mirror?.glassType || item.input.glassType || ''
+        );
+
+        cellText('glassType', glassType, 6.2);
+
+        // Client Fill is deliberately left empty for the user/workshop.
+        // No automatic status or default text is inserted.
+
+        // Mesh: only 2.5-track models use this column.
+        if (showMeshColumn && isMeshModel(item)) {
+          const meshPanel = item.additionalPanels?.find((panel) =>
+            /mesh/i.test(panel.shutterType || '')
+          );
+
+          if (meshPanel) {
+            cellText(
+              'mesh',
+              `${meshPanel.heightMM} x ${meshPanel.widthMM}`,
+              6.5,
+              true,
+              INK_GREEN
+            );
+          }
+        }
       }
 
       rowY += rowHeight;
     }
 
-    // 4. FOOTER NOTE & SIGNATURE (At bottom of landscape sheet, y = 196 to 204 mm)
-    doc.setDrawColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
+    // --------------------------------------------------
+    // 4. FOOTER AND SIGNATURE
+    // --------------------------------------------------
+
+    doc.setDrawColor(
+      INK_SECONDARY[0],
+      INK_SECONDARY[1],
+      INK_SECONDARY[2]
+    );
+
     doc.setLineWidth(0.3);
-    doc.line(MARGIN_LEFT, A4_LANDSCAPE_H - 12, MARGIN_LEFT + TABLE_WIDTH, A4_LANDSCAPE_H - 12);
+
+    doc.line(
+      MARGIN_LEFT,
+      A4_LANDSCAPE_H - 12,
+      MARGIN_LEFT + TABLE_WIDTH,
+      A4_LANDSCAPE_H - 12
+    );
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
-    const footerText = `Certified Fabrication Order | Generated by ${shopName} CAD Engine | Exact Sum Formulas & Deductions Verified`;
-    doc.text(footerText, MARGIN_LEFT, A4_LANDSCAPE_H - 7);
+    doc.setFontSize(7);
+    doc.setTextColor(
+      INK_SECONDARY[0],
+      INK_SECONDARY[1],
+      INK_SECONDARY[2]
+    );
+
+    doc.text(
+      `${shopName} WORKSHOP ORDER SHEET`,
+      MARGIN_LEFT,
+      A4_LANDSCAPE_H - 7
+    );
 
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.text('Authorized Workshop Signature: ________________________________', MARGIN_LEFT + TABLE_WIDTH, A4_LANDSCAPE_H - 7, {
-      align: 'right',
-    });
+    doc.setTextColor(
+      INK_DEEP[0],
+      INK_DEEP[1],
+      INK_DEEP[2]
+    );
+
+    doc.text(
+      'Workshop Supervisor / QC Signature: ____________________________________',
+      MARGIN_LEFT + TABLE_WIDTH,
+      A4_LANDSCAPE_H - 7,
+      { align: 'right' }
+    );
   }
 
   return doc;
 }
 
 /**
- * Dedicated Glass Factory Cutting Order Sheet (A4 Portrait Vector PDF)
- * Optimized for glass vendors: square feet calculation, thickness, and packing notes.
+ * Dedicated Glass Factory Cutting Order Sheet (A4 Portrait Vector PDF).
+ * Existing glass-vendor calculations and layout are retained.
  */
 export function generateGlassFactoryOrderPDF(
   results: CalculationResult[],
@@ -487,7 +707,6 @@ export function generateGlassFactoryOrderPDF(
   const projectSerial = cleanAscii(options.projectSerial || '');
   const dateStr = cleanAscii(options.date || new Date().toLocaleDateString('en-GB'));
 
-  // Filter only items with glass cuts
   const glassItems = results.filter(
     (r) => r.mirror && r.mirror.count > 0 && r.mirror.heightMM > 0 && r.mirror.widthMM > 0
   );
@@ -513,42 +732,77 @@ export function generateGlassFactoryOrderPDF(
     // Header
     doc.setDrawColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
     doc.setLineWidth(0.6);
-    doc.rect(MARGIN_LEFT_PORTRAIT, 7, TABLE_WIDTH_PORTRAIT, 18);
+    doc.rect(MARGIN_LEFT_PORTRAIT, 7, TABLE_WIDTH_PORTRAIT, 23);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(14);
-    doc.setTextColor(16, 120, 80); // Emerald Green
+    doc.setTextColor(16, 120, 80);
     doc.text(`${shopName} - GLASS FACTORY CUTTING ORDER`, MARGIN_LEFT_PORTRAIT + 3, 13);
 
-    // Project Serial Badge
     if (projectSerial) {
       doc.setFillColor(16, 120, 80);
-      doc.roundedRect(MARGIN_LEFT_PORTRAIT + TABLE_WIDTH_PORTRAIT - 30, 8.5, 27, 6.2, 1, 1, 'F');
+      doc.roundedRect(
+        MARGIN_LEFT_PORTRAIT + TABLE_WIDTH_PORTRAIT - 30,
+        8.5,
+        27,
+        6.2,
+        1,
+        1,
+        'F'
+      );
+
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8.5);
       doc.setTextColor(255, 255, 255);
-      doc.text(projectSerial, MARGIN_LEFT_PORTRAIT + TABLE_WIDTH_PORTRAIT - 16.5, 12.9, { align: 'center' });
+      doc.text(
+        projectSerial,
+        MARGIN_LEFT_PORTRAIT + TABLE_WIDTH_PORTRAIT - 16.5,
+        12.9,
+        { align: 'center' }
+      );
     }
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
-    doc.text('Vendor Glass Cut List with Square Feet Calculations', MARGIN_LEFT_PORTRAIT + 3, 17);
+    doc.text(
+      'Vendor Glass Cut List with Square Feet Calculations',
+      MARGIN_LEFT_PORTRAIT + 3,
+      17
+    );
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
     doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    const projPart = projectSerial ? `[${projectSerial}] ${project}` : project;
-    doc.text(`Customer: ${customer} ${phone ? `(${phone})` : ''}${projPart ? ` | Project: ${projPart}` : ''}`, MARGIN_LEFT_PORTRAIT + 3, 22.5);
-    doc.text(`Date: ${dateStr}  |  Page ${page + 1} of ${totalPages}`, MARGIN_LEFT_PORTRAIT + TABLE_WIDTH_PORTRAIT - 3, 22.5, { align: 'right' });
 
-    // Table Header
-    const tableHeaderY = 26;
+    const projPart = projectSerial ? `[${projectSerial}] ${project}` : project;
+
+    doc.text(
+      `Customer: ${customer}${projPart ? ` | Project: ${projPart}` : ''}`,
+      MARGIN_LEFT_PORTRAIT + 3,
+      22.5
+    );
+
+    if (phone) {
+      doc.text(`Phone: ${phone}`, MARGIN_LEFT_PORTRAIT + 3, 26.5);
+    }
+
+    doc.text(
+      `Date: ${dateStr}  |  Page ${page + 1} of ${totalPages}`,
+      MARGIN_LEFT_PORTRAIT + TABLE_WIDTH_PORTRAIT - 3,
+      26.5,
+      { align: 'right' }
+    );
+
+    // Table header
+    const tableHeaderY = 31.5;
     const tableHeaderH = 10;
+
     doc.setFillColor(INK_HEADER_BG[0], INK_HEADER_BG[1], INK_HEADER_BG[2]);
     doc.rect(MARGIN_LEFT_PORTRAIT, tableHeaderY, TABLE_WIDTH_PORTRAIT, tableHeaderH, 'FD');
 
     let currentX = MARGIN_LEFT_PORTRAIT;
+
     columns.forEach((col) => {
       doc.setLineWidth(0.4);
       doc.setDrawColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
@@ -580,6 +834,7 @@ export function generateGlassFactoryOrderPDF(
       if (item) {
         const hex = getModelColor(item.input.modelId, item.input.identificationColor);
         const rgb = hexToRgb(hex);
+
         doc.setFillColor(rgb[0], rgb[1], rgb[2]);
         doc.rect(MARGIN_LEFT_PORTRAIT, rowY, TABLE_WIDTH_PORTRAIT, rowHeight, 'F');
 
@@ -609,6 +864,7 @@ export function generateGlassFactoryOrderPDF(
           const w = item.mirror.widthMM;
           const qty = item.mirror.count;
           const sqft = Number(((h * w * qty) / 92903.04).toFixed(2));
+
           pageTotalSqft += sqft;
 
           switch (cIdx) {
@@ -618,52 +874,72 @@ export function generateGlassFactoryOrderPDF(
               doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
               doc.text(`${startIdx + r + 1}`, colX + col.width / 2, centerY + 1, { align: 'center' });
               break;
+
             case 1:
               doc.setFont('helvetica', 'bold');
               doc.setFontSize(11);
               doc.setTextColor(INK_ACCENT[0], INK_ACCENT[1], INK_ACCENT[2]);
-              doc.text(item.input.windowLabel || `W${startIdx + r + 1}`, colX + col.width / 2, centerY + 1, { align: 'center' });
+              doc.text(
+                item.input.windowLabel || `W${startIdx + r + 1}`,
+                colX + col.width / 2,
+                centerY + 1,
+                { align: 'center' }
+              );
               break;
+
             case 2:
               doc.setFont('helvetica', 'bold');
               doc.setFontSize(12);
               doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
               doc.text(`${h}`, colX + col.width / 2, centerY - 1, { align: 'center' });
+
               doc.setFontSize(7);
               doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
               doc.text(`${(h / 25.4).toFixed(1)}"`, colX + col.width / 2, centerY + 4.5, { align: 'center' });
               break;
+
             case 3:
               doc.setFont('helvetica', 'bold');
               doc.setFontSize(12);
               doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
               doc.text(`${w}`, colX + col.width / 2, centerY - 1, { align: 'center' });
+
               doc.setFontSize(7);
               doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
               doc.text(`${(w / 25.4).toFixed(1)}"`, colX + col.width / 2, centerY + 4.5, { align: 'center' });
               break;
+
             case 4:
               doc.setFont('helvetica', 'bold');
               doc.setFontSize(12);
               doc.setTextColor(16, 120, 80);
               doc.text(`${qty}`, colX + col.width / 2, centerY + 1, { align: 'center' });
               break;
+
             case 5:
               doc.setFont('helvetica', 'bold');
               doc.setFontSize(10.5);
               doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
               doc.text(`${sqft} sq.ft`, colX + col.width / 2, centerY + 1, { align: 'center' });
               break;
-            case 6:
+
+            case 6: {
+              const glassType = cleanAscii(item.mirror.glassType || item.input.glassType || '');
+
               doc.setFont('helvetica', 'bold');
               doc.setFontSize(8.5);
               doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-              doc.text(item.mirror.glassType || 'Clear 5mm Glass', colX + 2, centerY - 1);
+
+              if (glassType) {
+                doc.text(glassType, colX + 2, centerY - 1);
+              }
+
               doc.setFont('helvetica', 'normal');
               doc.setFontSize(7);
               doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
               doc.text('Polished Edges | 0mm Tol', colX + 2, centerY + 4);
               break;
+            }
           }
         }
 
@@ -677,10 +953,19 @@ export function generateGlassFactoryOrderPDF(
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
     doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-    doc.text(`Total Estimated Area: ${pageTotalSqft.toFixed(2)} Sq.Ft`, MARGIN_LEFT_PORTRAIT, A4_PORTRAIT_H - 6);
-    doc.text('Vendor Acceptance: _____________________', MARGIN_LEFT_PORTRAIT + TABLE_WIDTH_PORTRAIT, A4_PORTRAIT_H - 6, {
-      align: 'right',
-    });
+
+    doc.text(
+      `Total Estimated Area: ${pageTotalSqft.toFixed(2)} Sq.Ft`,
+      MARGIN_LEFT_PORTRAIT,
+      A4_PORTRAIT_H - 6
+    );
+
+    doc.text(
+      'Vendor Acceptance: _____________________',
+      MARGIN_LEFT_PORTRAIT + TABLE_WIDTH_PORTRAIT,
+      A4_PORTRAIT_H - 6,
+      { align: 'right' }
+    );
   }
 
   return doc;

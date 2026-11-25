@@ -10,7 +10,11 @@ from app.db.dependencies import get_db
 from app.models.customer import Customer
 from app.models.project import Project
 from app.models.shop import Shop
-from app.schemas.project import ProjectCreate, ProjectResponse, ProjectStatusUpdate
+from app.schemas.project import (
+    ProjectCreate,
+    ProjectResponse,
+    ProjectStatusUpdate,
+)
 
 
 router = APIRouter(
@@ -20,22 +24,29 @@ router = APIRouter(
 
 
 def generate_unique_project_serial_number(db: Session) -> str:
-    """Generate sequential unique project serial number (e.g. PROJ-1, PROJ-2)."""
+    """Generate sequential unique project serial numbers
+    (e.g. PROJ-1, PROJ-2).
+    """
     import re
+
     serials = db.scalars(select(Project.serial_number)).all()
     existing_nums = set()
-    for s in serials:
-        if s:
-            match = re.search(r"(\d+)", s)
+
+    for serial in serials:
+        if serial:
+            match = re.search(r"(\d+)", serial)
             if match:
                 try:
                     num = int(match.group(1))
                     existing_nums.add(num)
                 except ValueError:
                     pass
+
     next_num = 1
+
     while next_num in existing_nums:
         next_num += 1
+
     return f"PROJ-{next_num}"
 
 
@@ -66,7 +77,7 @@ def create_project(
     cleaned_name = project_data.name.strip()
     status_val = project_data.status or "active"
 
-    # Enforce unique project/order name per customer: reject duplicates
+    # Enforce unique project/order name per customer.
     existing_project = db.scalar(
         select(Project).where(
             Project.shop_id == shop.id,
@@ -82,17 +93,25 @@ def create_project(
             detail="enter unique name",
         )
 
-    # Assign unique project serial number with zero duplicate in database
+    # Assign a unique project serial number.
     if project_data.serial_number and project_data.serial_number.strip():
         chosen_serial = project_data.serial_number.strip().upper()
+
         duplicate_serial = db.scalar(
-            select(Project).where(Project.serial_number == chosen_serial)
+            select(Project).where(
+                Project.serial_number == chosen_serial
+            )
         )
+
         if duplicate_serial:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Serial number {chosen_serial} already exists in database.",
+                detail=(
+                    f"Serial number {chosen_serial} "
+                    "already exists in database."
+                ),
             )
+
         serial_val = chosen_serial
     else:
         serial_val = generate_unique_project_serial_number(db)
@@ -127,22 +146,31 @@ def get_projects(
     query = select(Project).where(Project.shop_id == shop.id)
 
     if status_filter and status_filter.lower() != "all":
-        query = query.where(Project.status == status_filter.lower())
+        query = query.where(
+            Project.status == status_filter.lower()
+        )
     else:
         query = query.where(Project.status != "inactive")
 
     if customer_id is not None:
-        query = query.where(Project.customer_id == customer_id)
+        query = query.where(
+            Project.customer_id == customer_id
+        )
 
     statement = query.order_by(Project.created_at.desc())
     projects = list(db.scalars(statement).all())
     needs_commit = False
-    for p in projects:
-        if not p.serial_number:
-            p.serial_number = generate_unique_project_serial_number(db)
+
+    for project in projects:
+        if not project.serial_number:
+            project.serial_number = (
+                generate_unique_project_serial_number(db)
+            )
             needs_commit = True
+
     if needs_commit:
         db.commit()
+
     return projects
 
 
@@ -212,7 +240,7 @@ def update_project(
 
     cleaned_name = project_data.name.strip()
 
-    # Reject duplicate project names for this customer
+    # Reject duplicate project names for this customer.
     existing_project = db.scalar(
         select(Project).where(
             Project.shop_id == shop.id,
@@ -235,7 +263,10 @@ def update_project(
     project.input_unit = project_data.input_unit
     project.output_unit = project_data.output_unit
     project.default_tolerance_mm = project_data.default_tolerance_mm
-    project.default_apply_tolerance = project_data.default_apply_tolerance
+    project.default_apply_tolerance = (
+        project_data.default_apply_tolerance
+    )
+
     if project_data.status:
         project.status = project_data.status
 

@@ -9,7 +9,6 @@ import { getModelColor } from '../utils/modelColors'
 import {
   generateProjectSerialNumber,
   isDuplicateOrderName,
-  matchesProjectSerial,
 } from '../utils/projectSerials'
 import {
   calculateSlidingWindow,
@@ -378,23 +377,6 @@ function Measurements({
     () => savedOrders.find((order) => order.id === currentOrderId),
     [currentOrderId, savedOrders]
   )
-
-  const [savedOrderSearch, setSavedOrderSearch] = useState('')
-
-  const filteredSavedOrders = useMemo(() => {
-    if (!savedOrderSearch.trim()) return savedOrders
-
-    const query = savedOrderSearch.trim().toLowerCase()
-
-    return savedOrders.filter((order) => {
-      return (
-        order.projectName.toLowerCase().includes(query) ||
-        order.customerName.toLowerCase().includes(query) ||
-        (order.customerPhone || '').toLowerCase().includes(query) ||
-        matchesProjectSerial(order.serialNumber, query)
-      )
-    })
-  }, [savedOrders, savedOrderSearch])
 
   const [customFormulas, setCustomFormulas] =
     useState<Record<string, CustomDeductionOverrides>>(loadCustomFormulas)
@@ -1029,123 +1011,6 @@ function Measurements({
     }
   }
 
-  const openOrder = async (order: SavedOrder) => {
-    const confirmed = window.confirm(
-      'Open this order? Any unsaved changes in the current form will be lost.'
-    )
-
-    if (!confirmed) return
-
-    setCustomerName(order.customerName)
-    setCustomerPhone(order.customerPhone)
-    setOrderDate(order.orderDate)
-    setProjectName(order.projectName)
-    setDefaultTolerance(order.defaultTolerance)
-    setDefaultApplyTolerance(order.defaultApplyTolerance)
-    setFromUnit(order.fromUnit)
-    setToUnit(order.toUnit)
-    setCurrentOrderId(order.id)
-
-    const isUuid =
-      !!order.id &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        order.id
-      )
-
-    let loadedFromBackend = false
-
-    if (isUuid) {
-      try {
-        const response = await fetch(
-          `/api/projects/${order.id}/measurements/`
-        )
-
-        if (response.ok) {
-          const measurementData: BackendMeasurement[] =
-            await response.json()
-
-          if (
-            Array.isArray(measurementData) &&
-            measurementData.length > 0
-          ) {
-            const loadedRows: MeasurementRow[] = measurementData.map(
-              (measurement, index) => ({
-                id: index + 1,
-                height:
-                  measurement.height !== null &&
-                  measurement.height !== undefined
-                    ? String(measurement.height)
-                    : '',
-                width:
-                  measurement.width !== null &&
-                  measurement.width !== undefined
-                    ? String(measurement.width)
-                    : '',
-                modelId: measurement.model_id || '58-2',
-                variantLetter: measurement.variant_letter || '',
-                glassType: measurement.glass_type || '',
-                toleranceMm: Number(measurement.tolerance_mm) || 5,
-                applyTolerance: measurement.apply_tolerance ?? true,
-                heightAdditionalMm:
-                  Number(measurement.height_additional_mm) || 0,
-                widthAdditionalMm:
-                  Number(measurement.width_additional_mm) || 0,
-                identificationColor:
-                  measurement.identification_color ||
-                  identificationColors[index % identificationColors.length],
-                backendId: measurement.id,
-                status: measurement.status || 'pending',
-              })
-            )
-
-            setRows(loadedRows)
-            loadedFromBackend = true
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching backend measurements:', error)
-      }
-    }
-
-    if (!loadedFromBackend) {
-      setRows(
-        order.rows.map((row) => ({
-          ...row,
-          variantLetter: row.variantLetter || '',
-        }))
-      )
-    }
-
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  const deleteOrder = (id: string) => {
-    const order = savedOrders.find((item) => item.id === id)
-    if (!order) return
-
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${order.projectName}"? This cannot be undone.`
-    )
-
-    if (!confirmed) return
-
-    const isUuid =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        id
-      )
-
-    if (isUuid) {
-      fetch(`/api/projects/${id}`, { method: 'DELETE' }).catch(console.error)
-    }
-
-    const updatedOrders = savedOrders.filter((item) => item.id !== id)
-
-    if (saveOrdersToStorage(updatedOrders)) {
-      if (currentOrderId === id) setCurrentOrderId(null)
-      window.alert('Order deleted successfully!')
-    }
-  }
-
   const createNewOrder = () => {
     const confirmed = window.confirm(
       'Start a new order? Any unsaved changes in the current form will be lost.'
@@ -1391,102 +1256,6 @@ function Measurements({
             </button>
           )}
         </div>
-      </div>
-
-      <div className="saved-orders-panel">
-        <div className="saved-orders-heading">
-          <div>
-            <h3>Saved Orders</h3>
-            <p>Open, update or delete your previously saved orders.</p>
-          </div>
-          <strong>{savedOrders.length} saved</strong>
-        </div>
-
-        {savedOrders.length > 0 && (
-          <div style={{ padding: '0 16px 12px 16px' }}>
-            <input
-              type="text"
-              placeholder={
-                language === 'ta'
-                  ? 'திட்டம் அல்லது ID (எ.கா. proj-1) மூலம் தேடவும்...'
-                  : 'Search saved orders by name or project ID (e.g. proj-1)...'
-              }
-              value={savedOrderSearch}
-              onChange={(event) => setSavedOrderSearch(event.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: '6px',
-                border: '1px solid #cbd5e1',
-                fontSize: '13px',
-                boxSizing: 'border-box',
-                outline: 'none',
-              }}
-            />
-          </div>
-        )}
-
-        {savedOrders.length === 0 ? (
-          <p className="saved-orders-empty">
-            No saved orders yet. Complete an order and click Save Order.
-          </p>
-        ) : filteredSavedOrders.length === 0 ? (
-          <p className="saved-orders-empty">
-            No saved orders match "{savedOrderSearch}".
-          </p>
-        ) : (
-          <div className="saved-orders-list">
-            {filteredSavedOrders.map((order) => (
-              <div className="saved-order-item" key={order.id}>
-                <div className="saved-order-information">
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      marginBottom: '4px',
-                    }}
-                  >
-                    {order.serialNumber && (
-                      <span
-                        style={{
-                          backgroundColor: '#2563eb',
-                          color: '#ffffff',
-                          padding: '2px 7px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          fontFamily: 'monospace',
-                          letterSpacing: '0.5px',
-                        }}
-                      >
-                        {order.serialNumber}
-                      </span>
-                    )}
-                    <strong>{order.projectName}</strong>
-                  </div>
-                  <span>Customer: {order.customerName}</span>
-                  <span>Phone: {order.customerPhone || '-'}</span>
-                  <span>Date: {order.orderDate}</span>
-                  <span>Windows: {order.rows.length}</span>
-                </div>
-
-                <div className="saved-order-actions">
-                  <button type="button" onClick={() => openOrder(order)}>
-                    Open
-                  </button>
-                  <button
-                    type="button"
-                    className="delete-row-button"
-                    onClick={() => deleteOrder(order.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {currentOrderId && (

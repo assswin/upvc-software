@@ -1,0 +1,99 @@
+warning: in the working copy of 'backend/app/api/routes/customers.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/backend/app/api/routes/customers.py b/backend/app/api/routes/customers.py[m
+[1mindex 2d78323..c9ed51a 100644[m
+[1m--- a/backend/app/api/routes/customers.py[m
+[1m+++ b/backend/app/api/routes/customers.py[m
+[36m@@ -29,32 +29,49 @@[m [mdef create_customer([m
+     shop: Shop = Depends(get_current_shop),[m
+ ):[m
+     cleaned_name = customer_data.name.strip()[m
+[31m-    cleaned_phone = customer_data.phone.strip() if customer_data.phone else None[m
+[31m-    cleaned_email = customer_data.email.lower().strip() if customer_data.email else None[m
+[32m+[m[32m    cleaned_phone = ([m
+[32m+[m[32m        customer_data.phone.strip() if customer_data.phone else None[m
+[32m+[m[32m    )[m
+[32m+[m[32m    cleaned_email = ([m
+[32m+[m[32m        customer_data.email.lower().strip()[m
+[32m+[m[32m        if customer_data.email[m
+[32m+[m[32m        else None[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    # Find an existing customer by phone or case-insensitive name.[m
+[32m+[m[32m    existing_query = select(Customer).where([m
+[32m+[m[32m        Customer.shop_id == shop.id[m
+[32m+[m[32m    )[m
+ [m
+[31m-    # Deduplication check: Search by matching phone (if provided) or exact case-insensitive name[m
+[31m-    existing_query = select(Customer).where(Customer.shop_id == shop.id)[m
+     if cleaned_phone:[m
+         existing_query = existing_query.where([m
+[31m-            (Customer.phone == cleaned_phone) |[m
+[31m-            (Customer.name.ilike(cleaned_name))[m
+[32m+[m[32m            (Customer.phone == cleaned_phone)[m
+[32m+[m[32m            | (Customer.name.ilike(cleaned_name))[m
+         )[m
+     else:[m
+[31m-        existing_query = existing_query.where(Customer.name.ilike(cleaned_name))[m
+[32m+[m[32m        existing_query = existing_query.where([m
+[32m+[m[32m            Customer.name.ilike(cleaned_name)[m
+[32m+[m[32m        )[m
+ [m
+     existing_customer = db.scalar(existing_query)[m
+[32m+[m
+     if existing_customer:[m
+[31m-        # Reuse and reactivate existing customer without creating duplicates[m
+[32m+[m[32m        # Reuse and reactivate the existing customer.[m
+         existing_customer.name = cleaned_name[m
+[32m+[m
+         if cleaned_phone:[m
+             existing_customer.phone = cleaned_phone[m
+[32m+[m
+         if cleaned_email:[m
+             existing_customer.email = cleaned_email[m
+[32m+[m
+         if customer_data.address:[m
+             existing_customer.address = customer_data.address[m
+[32m+[m
+         existing_customer.is_active = True[m
+         db.commit()[m
+         db.refresh(existing_customer)[m
+[32m+[m
+         return existing_customer[m
+ [m
+     customer = Customer([m
+[36m@@ -74,16 +91,21 @@[m [mdef create_customer([m
+ [m
+ @router.get("/", response_model=list[CustomerResponse])[m
+ def get_customers([m
+[32m+[m[32m    include_inactive: bool = False,[m
+     db: Session = Depends(get_db),[m
+     shop: Shop = Depends(get_current_shop),[m
+ ):[m
+[31m-    statement = ([m
+[31m-        select(Customer)[m
+[31m-        .where([m
+[31m-            Customer.shop_id == shop.id,[m
+[31m-            Customer.is_active.is_(True),[m
+[32m+[m[32m    statement = select(Customer).where([m
+[32m+[m[32m        Customer.shop_id == shop.id[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    if not include_inactive:[m
+[32m+[m[32m        statement = statement.where([m
+[32m+[m[32m            Customer.is_active.is_(True)[m
+         )[m
+[31m-        .order_by(Customer.created_at.desc())[m
+[32m+[m
+[32m+[m[32m    statement = statement.order_by([m
+[32m+[m[32m        Customer.created_at.desc()[m
+     )[m
+ [m
+     return db.scalars(statement).all()[m
+[36m@@ -175,7 +197,6 @@[m [mdef delete_customer([m
+         )[m
+ [m
+     customer.is_active = False[m
+[31m-[m
+     db.commit()[m
+ [m
+     return {[m
