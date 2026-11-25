@@ -1,127 +1,169 @@
-
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Download,
+  Eye,
+  FileSpreadsheet,
+  Glasses,
+  RefreshCw,
+  Search,
+  UserRound,
+} from 'lucide-react'
 import type { Language } from '../components/Sidebar'
-import type { CalculationResult } from '../types/cad'
-import { WindowVisualizer2D } from '../components/WindowVisualizer2D'
 import { A4FabricationModal } from '../components/A4FabricationModal'
+import { WindowVisualizer2D } from '../components/WindowVisualizer2D'
+import type { CalculationResult } from '../types/cad'
+import type { Customer } from './Customers'
+import type { MeasurementRow } from './Measurements'
 import { convertMeasurementsToCalculationResults } from '../utils/cadBridge'
-import { getModelColor } from '../utils/modelColors'
-import { generateProjectSerialNumber } from '../utils/projectSerials'
+import { convertToMm, WINDOW_MODELS } from '../utils/slidingCalculations'
+import type { CustomDeductionOverrides } from '../utils/slidingCalculations'
+import { resolveWindowLabels } from '../utils/windowIdentity'
 import {
   generateWorkshopOrderPDF,
   generateGlassFactoryOrderPDF,
 } from '../utils/pdfGenerator'
-import type { MeasurementRow } from './Measurements'
 import './Drawings.css'
 
 interface DrawingsProps {
   language: Language
   initialProjectId?: string | null
-  onOpenMeasurements?: (projectId?: string) => void
+  onOpenMeasurements?: (
+    projectId?: string,
+    customer?: Customer,
+  ) => void
 }
 
-interface SavedOrder {
+interface BackendProject {
   id: string
-  serialNumber?: string
-  backendId?: string
-  customerName: string
-  customerPhone: string
-  orderDate: string
-  projectName: string
-  rows: MeasurementRow[]
-  windowLabels?: string[]
+  customer_id: string
+  name: string
+  serial_number?: string | null
+  input_unit?: 'in' | 'cm' | 'mm' | null
+  output_unit?: 'in' | 'cm' | 'mm' | null
+  default_tolerance_mm?: number | string | null
+  default_apply_tolerance?: boolean | null
 }
 
-const STORAGE_KEY = 'ls-interiors-saved-orders'
+interface BackendMeasurement {
+  id: string
+  row_order: number
+  height?: number | string | null
+  width?: number | string | null
+  model_id?: string | null
+  variant_letter?: string | null
+  glass_type?: string | null
+  tolerance_mm?: number | string | null
+  apply_tolerance?: boolean | null
+  height_additional_mm?: number | string | null
+  width_additional_mm?: number | string | null
+  identification_color?: string | null
+  status?: string | null
+}
+
+interface DrawingRecord {
+  project: BackendProject
+  measurement: BackendMeasurement
+  result: CalculationResult
+  windowLabel: string
+}
+
+type ExportType = 'workshop' | 'glass'
+
 const FORMULAS_STORAGE_KEY = 'ls-interiors-custom-formulas'
+const PAGE_SIZE = 8
 
-// Rebuild variation labels from saved measurement rows
-// when windowLabels are missing.
-function resolveSavedWindowLabels(rows: MeasurementRow[]): string[] {
-  let rootLabel = ''
-  let rootNumber = 0
-
-  return rows.map((row) => {
-    const variant = row.variantLetter?.trim()
-
-    if (variant) {
-      if (!rootLabel) {
-        rootNumber += 1
-        rootLabel = `W${rootNumber}`
-      }
-
-      return `${rootLabel}${variant}`
-    }
-
-    rootNumber += 1
-    rootLabel = `W${rootNumber}`
-
-    return rootLabel
-  })
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unexpected request failure.'
 }
 
-// Load saved orders safely.
-function loadSavedOrders(): SavedOrder[] {
+async function readJson<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(
+      detail || `Request failed with status ${response.status}.`,
+    )
+  }
+
+  return response.json() as Promise<T>
+}
+
+function loadSavedFormulas(): Record<string, CustomDeductionOverrides> {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
+    const stored = localStorage.getItem(FORMULAS_STORAGE_KEY)
+    if (!stored) return {}
 
-    if (!stored) return []
-
-    const parsed = JSON.parse(stored) as SavedOrder[]
-
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return []
+    const parsed: unknown = JSON.parse(stored)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, CustomDeductionOverrides>
     }
 
-    const usedSerials: string[] = []
-
-    return parsed.map((order) => {
-      let serial = order.serialNumber
-
-      if (!serial || usedSerials.includes(serial)) {
-        serial = generateProjectSerialNumber(usedSerials)
-      }
-
-      usedSerials.push(serial)
-
-      return {
-        ...order,
-        serialNumber: serial,
-      }
-    })
+    throw new Error('Saved calculation settings have an invalid format.')
   } catch (error) {
-    console.error('Error loading saved orders:', error)
-    return []
+    console.error('Unable to load saved calculation settings:', error)
+    return {}
   }
 }
 
-// Load custom formulas safely.
-function loadSavedFormulas(): Exclude<
-  Parameters<typeof convertMeasurementsToCalculationResults>[2],
-  undefined
-> {
-  try {
-    const storedFormulas = localStorage.getItem(FORMULAS_STORAGE_KEY)
+function getMeshPanel(result: CalculationResult) {
+  return result.additionalPanels?.find(
+    (panel) =>
+      /mesh/i.test(panel.shutterType || '') &&
+      panel.heightMM > 0 &&
+      panel.widthMM > 0,
+  )
+}
 
-    if (!storedFormulas) return {}
+function getModelType(modelId: string): string {
+  const model = WINDOW_MODELS.find((item) => item.id === modelId)
+  if (!model) return modelId || '—'
 
-    const parsed: unknown = JSON.parse(storedFormulas)
+  if (model.category === 'open') {
+    if (modelId === 'open-single') return 'Casement'
+    if (modelId === 'open-double') return 'Open-Double'
+    if (modelId === 'open-triple') return 'Open-Triple'
+  }
 
-    if (
-      parsed !== null &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed)
-    ) {
-      return parsed as Exclude<
-        Parameters<typeof convertMeasurementsToCalculationResults>[2],
-        undefined
-      >
-    }
+  return model.category.charAt(0).toUpperCase() + model.category.slice(1)
+}
 
-    return {}
-  } catch (error) {
-    console.error('Error loading saved formulas:', error)
-    return {}
+function getStatusLabel(status?: string | null): string {
+  if (!status || status === 'pending') return 'Pending'
+  if (status === 'finished' || status === 'completed') return 'Completed'
+  if (status === 'in_progress') return 'In Progress'
+
+  return status.replaceAll('_', ' ')
+}
+
+function getStatusClass(status?: string | null): string {
+  if (status === 'finished' || status === 'completed') return 'completed'
+  if (status === 'in_progress') return 'in-progress'
+  return 'pending'
+}
+
+function mapMeasurementToRow(
+  measurement: BackendMeasurement,
+  project: BackendProject,
+  index: number,
+): MeasurementRow {
+  return {
+    id: index + 1,
+    backendId: measurement.id,
+    height: measurement.height == null ? '' : String(measurement.height),
+    width: measurement.width == null ? '' : String(measurement.width),
+    modelId: measurement.model_id || '',
+    variantLetter: measurement.variant_letter || '',
+    glassType: measurement.glass_type || '',
+    toleranceMm:
+      measurement.tolerance_mm == null
+        ? Number(project.default_tolerance_mm ?? 5)
+        : Number(measurement.tolerance_mm),
+    applyTolerance:
+      measurement.apply_tolerance ??
+      project.default_apply_tolerance ??
+      true,
+    heightAdditionalMm: Number(measurement.height_additional_mm ?? 0),
+    widthAdditionalMm: Number(measurement.width_additional_mm ?? 0),
+    identificationColor: measurement.identification_color || '#E5E7EB',
   }
 }
 
@@ -131,438 +173,655 @@ export default function Drawings({
   onOpenMeasurements,
 }: DrawingsProps) {
   const isTamil = language === 'ta'
-
-  // Load saved orders once when the component initializes.
-  const [orders] = useState<SavedOrder[]>(loadSavedOrders)
-
-  const [selectedOrderId, setSelectedOrderId] = useState<string>('')
-  const [activeTab, setActiveTab] = useState<'cad' | 'pdf'>('cad')
-  const [cadSelectedIndex, setCadSelectedIndex] = useState(0)
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [searchTerm, setSearchTerm] = useState('')
+  const [selectedCustomerId, setSelectedCustomerId] = useState('')
+  const selectedCustomerIdRef = useRef('')
+  const initialProjectResolvedRef = useRef(false)
+  const [records, setRecords] = useState<DrawingRecord[]>([])
+  const [customFormulas] = useState(loadSavedFormulas)
+  const [loadingCustomers, setLoadingCustomers] = useState(true)
+  const [loadingRecords, setLoadingRecords] = useState(false)
+  const [customerError, setCustomerError] = useState('')
+  const [recordsError, setRecordsError] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [page, setPage] = useState(1)
+  const [viewIndex, setViewIndex] = useState<number | null>(null)
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
-  const [exportSheetType, setExportSheetType] = useState<
-    'workshop' | 'glass'
-  >('workshop')
+  const [exportSheetType, setExportSheetType] = useState<ExportType>('workshop')
+  const [pdfError, setPdfError] = useState('')
 
-  // Select the manually selected project first.
-  // Otherwise use the requested project, then the first saved order.
-  const selectedOrder =
-    orders.find((order) => order.id === selectedOrderId) ||
-    orders.find(
-      (order) =>
-        order.id === initialProjectId ||
-        order.backendId === initialProjectId
-    ) ||
-    orders[0]
+  const selectedCustomer =
+    customers.find((customer) => customer.id === selectedCustomerId) || null
 
-  // Convert measurement rows of selected order to CalculationResult[].
-  const calculationResults: CalculationResult[] = (() => {
-    if (
-      !selectedOrder ||
-      !selectedOrder.rows ||
-      selectedOrder.rows.length === 0
-    ) {
-      return []
+  const matchingCustomers = useMemo(() => {
+    const query = searchTerm.trim().toLocaleLowerCase()
+    return customers.filter((customer) =>
+      customer.name.toLocaleLowerCase().includes(query),
+    )
+  }, [customers, searchTerm])
+
+  const calculationResults = useMemo(
+    () => records.map((record) => record.result),
+    [records],
+  )
+
+  const projects = useMemo(() => {
+    const uniqueProjects = new Map<string, BackendProject>()
+    records.forEach((record) => uniqueProjects.set(record.project.id, record.project))
+    return Array.from(uniqueProjects.values())
+  }, [records])
+
+  const singleProject = projects.length === 1 ? projects[0] : undefined
+  const showMeshColumn = records.some((record) =>
+    Boolean(getMeshPanel(record.result)),
+  )
+  const showMullionColumn = records.some((record) => {
+    const mullionLength =
+      record.result.mullionMM ?? record.result.frame.mullionCutMM
+    return mullionLength !== undefined && mullionLength > 0
+  })
+
+  const totalPages = Math.max(1, Math.ceil(records.length / PAGE_SIZE))
+  const visibleRecords = records.slice(
+    (page - 1) * PAGE_SIZE,
+    page * PAGE_SIZE,
+  )
+  const firstVisibleRecord = records.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
+  const lastVisibleRecord = Math.min(page * PAGE_SIZE, records.length)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadCustomers = async () => {
+      setLoadingCustomers(true)
+      setCustomerError('')
+
+      try {
+        const response = await fetch('/api/customers/?include_inactive=true')
+        const loadedCustomers = await readJson<Customer[]>(response)
+
+        if (!Array.isArray(loadedCustomers)) {
+          throw new Error('The customer API returned an invalid response.')
+        }
+
+        let nextCustomer = loadedCustomers.find(
+          (customer) => customer.id === selectedCustomerIdRef.current,
+        )
+
+        if (initialProjectId && !initialProjectResolvedRef.current) {
+          const projectResponse = await fetch(
+            `/api/projects/${encodeURIComponent(initialProjectId)}`,
+          )
+          const project = await readJson<BackendProject>(projectResponse)
+          nextCustomer = loadedCustomers.find(
+            (customer) => customer.id === project.customer_id,
+          )
+
+          if (!nextCustomer) {
+            throw new Error(
+              'The selected project is not linked to an available customer.',
+            )
+          }
+
+          initialProjectResolvedRef.current = true
+        }
+
+        if (cancelled) return
+
+        setCustomers(loadedCustomers)
+        const nextId = nextCustomer?.id || ''
+        selectedCustomerIdRef.current = nextId
+        setSelectedCustomerId(nextId)
+      } catch (error) {
+        if (!cancelled) setCustomerError(getErrorMessage(error))
+      } finally {
+        if (!cancelled) setLoadingCustomers(false)
+      }
     }
 
-    const formulas = loadSavedFormulas()
+    void loadCustomers()
+    return () => {
+      cancelled = true
+    }
+  }, [initialProjectId, refreshKey])
 
-    // Use saved labels first.
-    // If missing, rebuild labels using variantLetter.
-    const labels =
-      selectedOrder.windowLabels &&
-      selectedOrder.windowLabels.length === selectedOrder.rows.length
-        ? selectedOrder.windowLabels
-        : resolveSavedWindowLabels(selectedOrder.rows)
+  useEffect(() => {
+    if (!selectedCustomer) return
 
-    return convertMeasurementsToCalculationResults(
-      selectedOrder.rows,
-      labels,
-      formulas
-    )
-  })()
+    let cancelled = false
+
+    const loadCustomerRecords = async () => {
+      setLoadingRecords(true)
+      setRecords([])
+      setRecordsError('')
+      setPdfError('')
+      setPage(1)
+      setViewIndex(null)
+
+      try {
+        const projectsResponse = await fetch(
+          `/api/projects/?customer_id=${encodeURIComponent(selectedCustomer.id)}`,
+        )
+        const customerProjects = await readJson<BackendProject[]>(
+          projectsResponse,
+        )
+
+        if (!Array.isArray(customerProjects)) {
+          throw new Error('The project API returned an invalid response.')
+        }
+
+        const projectMeasurements = await Promise.all(
+          customerProjects.map(async (project) => {
+            const response = await fetch(
+              `/api/projects/${encodeURIComponent(project.id)}/measurements/`,
+            )
+            const measurements = await readJson<BackendMeasurement[]>(response)
+
+            if (!Array.isArray(measurements)) {
+              throw new Error(
+                `Measurements for project ${project.name} are invalid.`,
+              )
+            }
+
+            return { project, measurements }
+          }),
+        )
+
+        const loadedRecords: DrawingRecord[] = []
+
+        for (const { project, measurements } of projectMeasurements) {
+          const unit = project.input_unit || 'in'
+          const rows = measurements.map((measurement, index) =>
+            mapMeasurementToRow(measurement, project, index),
+          )
+          const labels = resolveWindowLabels(rows, unit, customFormulas)
+          const results = convertMeasurementsToCalculationResults(
+            rows,
+            labels.map((item) => item.label),
+            customFormulas,
+            unit,
+          )
+
+          for (const result of results) {
+            const rowIndex = Number(result.id) - 1
+            const measurement = measurements[rowIndex]
+            const row = rows[rowIndex]
+            if (!measurement || !row || !row.modelId) continue
+
+            const height = Number(row.height)
+            const width = Number(row.width)
+            if (!Number.isFinite(height) || height <= 0) continue
+            if (!Number.isFinite(width) || width <= 0) continue
+
+            loadedRecords.push({
+              project,
+              measurement,
+              result,
+              windowLabel:
+                result.input.windowLabel ||
+                labels[rowIndex]?.label ||
+                `W${measurement.row_order}`,
+            })
+          }
+        }
+
+        if (!cancelled) setRecords(loadedRecords)
+      } catch (error) {
+        if (!cancelled) {
+          setRecords([])
+          setRecordsError(getErrorMessage(error))
+        }
+      } finally {
+        if (!cancelled) setLoadingRecords(false)
+      }
+    }
+
+    void loadCustomerRecords()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedCustomer, customFormulas, refreshKey])
+
+  const selectCustomer = (customer: Customer) => {
+    selectedCustomerIdRef.current = customer.id
+    setSelectedCustomerId(customer.id)
+    setPage(1)
+  }
+
+  const getPdfOptions = (project?: BackendProject) => ({
+    customerName: selectedCustomer?.name || '',
+    customerPhone: selectedCustomer?.phone || '',
+    customerSerial: selectedCustomer?.serial_number || '',
+    projectName: project?.name || '',
+    projectSerial: project?.serial_number || '',
+    date: new Date().toLocaleDateString('en-GB'),
+    isTamil,
+  })
+
+  const downloadPdf = (
+    type: ExportType,
+    results: CalculationResult[],
+    project?: BackendProject,
+  ) => {
+    if (!selectedCustomer || results.length === 0) return
+
+    setPdfError('')
+
+    try {
+      const doc =
+        type === 'workshop'
+          ? generateWorkshopOrderPDF(results, getPdfOptions(project))
+          : generateGlassFactoryOrderPDF(results, getPdfOptions(project))
+      const customerSlug = selectedCustomer.name
+        .trim()
+        .replace(/[^a-z0-9]+/gi, '_')
+      const date = new Date().toISOString().slice(0, 10)
+      const fileName =
+        type === 'workshop'
+          ? `LS_Interiors_Workshop_${customerSlug}_${date}.pdf`
+          : `LS_Interiors_Glass_Factory_${customerSlug}_${date}.pdf`
+
+      doc.save(fileName)
+    } catch (error) {
+      setPdfError(`Unable to generate the PDF: ${getErrorMessage(error)}`)
+    }
+  }
+
+  const openExportModal = (type: ExportType) => {
+    setExportSheetType(type)
+    setIsExportModalOpen(true)
+  }
+
+  const startView = (index: number) => {
+    setViewIndex(index)
+    setPage(Math.floor(index / PAGE_SIZE) + 1)
+  }
 
   return (
     <div className="drawings-workspace">
-      {/* Top Header & Project Selection */}
-      <div className="drawings-header">
+      <header className="drawings-page-heading">
+        <FileSpreadsheet aria-hidden="true" size={34} />
         <div>
-          <h2>
-            {isTamil
-              ? '2D வரைபடங்கள் & A4 PDF தயாரிப்பு மையம்'
-              : '2D CAD Blueprints & A4 Order Sheet PDF Center'}
-          </h2>
-
+          <h2>{isTamil ? 'வரைபடங்கள் & PDF' : 'Drawings & PDFs'}</h2>
           <p>
             {isTamil
-              ? 'ஹை-டெபினிஷன் 2D வரைபடங்கள் மற்றும் பட்டறைக்கான அதிகாரப்பூர்வ A4 PDF தாள்கள்'
-              : 'Ultra-High-Definition 2D Architectural CAD Drawings & Official Workshop A4 Vector PDFs'}
+              ? 'உங்கள் சாளர வரைபடங்கள் மற்றும் தயாரிப்பு ஆவணங்களைப் பார்க்கவும் பதிவிறக்கவும்.'
+              : 'View and download your window drawings and fabrication documents.'}
           </p>
         </div>
+      </header>
 
-        <div className="drawings-project-selector">
-          <label>
-            {isTamil ? 'திட்டம் தேர்வு:' : 'Select Project:'}
-          </label>
-
-          <select
-            value={selectedOrder?.id ?? ''}
-            onChange={(e) => {
-              setSelectedOrderId(e.target.value)
-              setCadSelectedIndex(0)
-            }}
-          >
-            {orders.length === 0 ? (
-              <option value="">
-                {isTamil ? 'ஆர்டர்கள் எதுவும் இல்லை' : 'No Orders Saved'}
-              </option>
-            ) : (
-              orders.map((order) => (
-                <option key={order.id} value={order.id}>
-                  {order.serialNumber
-                    ? `[${order.serialNumber}] `
-                    : ''}
-                  {order.projectName ||
-                    order.customerName ||
-                    'Untitled Order'}{' '}
-                  ({order.rows.length}{' '}
-                  {isTamil ? 'சாளரங்கள்' : 'windows'})
-                </option>
-              ))
-            )}
-          </select>
-
-          {onOpenMeasurements && (
-            <button
-              type="button"
-              className="drawings-edit-btn"
-              onClick={() => {
-                if (selectedOrder) {
-                  onOpenMeasurements(selectedOrder.id)
-                }
-              }}
-              disabled={!selectedOrder}
-            >
-              ✏️{' '}
-              {isTamil ? 'அளவீடுகளை திருத்து' : 'Edit Windows'}
-            </button>
-          )}
+      <section
+        className="drawings-customer-search"
+        aria-label="Customer search and selection"
+      >
+        <div className="drawings-search-input">
+          <Search aria-hidden="true" size={19} />
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder={
+              isTamil
+                ? 'வாடிக்கையாளர் பெயரில் தேடவும்...'
+                : 'Search by Customer Name...'
+            }
+            aria-label={
+              isTamil ? 'வாடிக்கையாளர் பெயரில் தேடவும்' : 'Search by Customer Name'
+            }
+            aria-controls="drawings-customer-results"
+            autoComplete="off"
+          />
         </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="drawings-tabs">
         <button
           type="button"
-          className={`drawings-tab ${
-            activeTab === 'cad' ? 'active' : ''
-          }`}
-          onClick={() => setActiveTab('cad')}
+          className="drawings-refresh-button"
+          onClick={() => setRefreshKey((current) => current + 1)}
+          disabled={loadingCustomers || loadingRecords}
         >
-          📐{' '}
-          {isTamil
-            ? '2D CAD வரைபடங்கள் (Elevation & Sections)'
-            : '2D CAD Blueprints (Elevation & Sections)'}
+          <RefreshCw aria-hidden="true" size={17} />
+          {isTamil ? 'புதுப்பி' : 'Refresh'}
         </button>
 
-        <button
-          type="button"
-          className={`drawings-tab ${
-            activeTab === 'pdf' ? 'active' : ''
-          }`}
-          onClick={() => setActiveTab('pdf')}
+        <div
+          className="drawings-customer-results"
+          id="drawings-customer-results"
+          role="group"
+          aria-label={isTamil ? 'வாடிக்கையாளர் பட்டியல்' : 'Customer list'}
         >
-          📄{' '}
-          {isTamil
-            ? 'L.S. Interiors A4 ஆர்டர் தாள் (Vector PDF)'
-            : 'L.S. Interiors A4 Workshop Order Sheet (Vector PDF)'}
-        </button>
-      </div>
-
-      {/* Content Area */}
-      <div className="drawings-content">
-        {calculationResults.length === 0 ? (
-          <div className="drawings-empty-state">
-            <span style={{ fontSize: '3rem' }}>📐</span>
-
-            <h3>
-              {isTamil
-                ? 'சாளரங்கள் எதுவும் இல்லை'
-                : 'No Windows Available to Draw'}
-            </h3>
-
+          {loadingCustomers ? (
             <p>
               {isTamil
-                ? 'அளவீடுகள் பக்கத்தில் சாளரங்களைச் சேர்த்து ஆர்டரைச் சேமிக்கவும்.'
-                : 'Please add window measurements and click Save Order to generate 2D CAD drawings and A4 sheets.'}
+                ? 'வாடிக்கையாளர்கள் ஏற்றப்படுகின்றனர்...'
+                : 'Loading customers...'}
             </p>
-
-            {onOpenMeasurements && (
+          ) : matchingCustomers.length > 0 ? (
+            matchingCustomers.map((customer) => (
               <button
                 type="button"
-                className="drawings-goto-btn"
-                onClick={() => onOpenMeasurements()}
+                aria-pressed={customer.id === selectedCustomerId}
+                key={customer.id}
+                onClick={() => selectCustomer(customer)}
               >
-                +{' '}
-                {isTamil
-                  ? 'புதிய ஆர்டர் தொடங்க'
-                  : 'Go to Measurements'}
+                <span>{customer.name}</span>
+                <small>
+                  {[customer.phone, customer.serial_number]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </small>
               </button>
-            )}
-          </div>
-        ) : activeTab === 'cad' ? (
-          <WindowVisualizer2D
-            results={calculationResults}
-            selectedIndex={cadSelectedIndex}
-            onSelectIndex={setCadSelectedIndex}
-            language={language}
-            projectName={selectedOrder?.projectName}
-            projectSerial={selectedOrder?.serialNumber}
-            customerName={selectedOrder?.customerName}
-            onExportPDF={() => {
-              setExportSheetType('workshop')
-              setIsExportModalOpen(true)
-            }}
-            onExportGlassPDF={() => {
-              setExportSheetType('glass')
-              setIsExportModalOpen(true)
-            }}
-          />
-        ) : (
-          <div className="drawings-pdf-overview">
-            <div className="drawings-pdf-banner">
-              <div>
-                <h3>
-                  {isTamil
-                    ? 'அதிகாரப்பூர்வ L.S. INTERIORS A4 பட்டறை தாள்'
-                    : 'Official L.S. INTERIORS A4 Fabrication Sheets'}
-                </h3>
+            ))
+          ) : (
+            <p>
+              {customerError
+                ? 'Unable to display customers.'
+                : 'No customers match this name.'}
+            </p>
+          )}
+        </div>
+      </section>
 
-                <p>
-                  {isTamil
-                    ? '14 சாளரங்கள் வரை ஒரு தாளில், தடிமனான மை, பெரிய எண்கள், ஜீரோ-ஓவர்லே பாக்ஸ் கட்டுப்பாடுகளுடன்'
-                    : '14 windows per sheet, heavy bold ink, large stacked cuts, and zero-overflow box constraints.'}
-                </p>
-              </div>
+      {customerError && (
+        <p className="drawings-error" role="alert">
+          Unable to load customers: {customerError}
+        </p>
+      )}
 
-              <div className="drawings-pdf-actions">
-                <button
-                  type="button"
-                  className="drawings-action-btn primary"
-                  onClick={() => {
-                    setExportSheetType('workshop')
-                    setIsExportModalOpen(true)
-                  }}
-                >
-                  👁️{' '}
-                  {isTamil
-                    ? 'முழு தாளைப் பார் & PDF பதிவிறக்கு'
-                    : 'Preview & Export Full Sheet (PDF)'}
-                </button>
+      {selectedCustomer && (
+        <section className="drawings-customer-summary" aria-label="Selected customer">
+          <UserRound aria-hidden="true" size={27} />
+          <span>
+            Customer: <strong>{selectedCustomer.name}</strong>
+          </span>
+          <span className="drawings-summary-divider" aria-hidden="true" />
+          <span>
+            <strong>Phone:</strong> {selectedCustomer.phone || ''}
+          </span>
+          <span className="drawings-summary-divider" aria-hidden="true" />
+          <span>
+            <strong>Serial No:</strong> {selectedCustomer.serial_number || ''}
+          </span>
+        </section>
+      )}
 
-                <button
-                  type="button"
-                  className="drawings-action-btn secondary"
-                  onClick={() => {
-                    setExportSheetType('glass')
-                    setIsExportModalOpen(true)
-                  }}
-                >
-                  🔍{' '}
-                  {isTamil
-                    ? 'தனி கிளாஸ் கட்டிங் தாள் (PDF)'
-                    : 'Dedicated Glass Sheet (PDF)'}
-                </button>
+      {recordsError && (
+        <p className="drawings-error" role="alert">
+          Unable to load saved measurements: {recordsError}
+        </p>
+      )}
 
-                <button
-                  type="button"
-                  className="drawings-action-btn quick-download"
-                  onClick={() => {
-                    const doc = generateWorkshopOrderPDF(
-                      calculationResults,
-                      {
-                        customerName: selectedOrder?.customerName || '',
-                        customerPhone: selectedOrder?.customerPhone || '',
-                        projectName: selectedOrder?.projectName || '',
-                        projectSerial: selectedOrder?.serialNumber || '',
-                        date:
-                          selectedOrder?.orderDate ||
-                          new Date().toLocaleDateString('en-GB'),
-                        isTamil,
-                      }
-                    )
-
-                    doc.save(
-                      `LS_Interiors_Workshop_Order_${new Date()
-                        .toISOString()
-                        .slice(0, 10)}.pdf`
-                    )
-                  }}
-                >
-                  ⚡{' '}
-                  {isTamil
-                    ? 'நேரடி A4 PDF பதிவிறக்கு'
-                    : 'Instant Workshop PDF'}
-                </button>
-
-                <button
-                  type="button"
-                  className="drawings-action-btn quick-download"
-                  onClick={() => {
-                    const doc = generateGlassFactoryOrderPDF(
-                      calculationResults,
-                      {
-                        customerName: selectedOrder?.customerName || '',
-                        customerPhone: selectedOrder?.customerPhone || '',
-                        projectName: selectedOrder?.projectName || '',
-                        projectSerial: selectedOrder?.serialNumber || '',
-                        date:
-                          selectedOrder?.orderDate ||
-                          new Date().toLocaleDateString('en-GB'),
-                        isTamil,
-                      }
-                    )
-
-                    doc.save(
-                      `LS_Interiors_Glass_Factory_Order_${new Date()
-                        .toISOString()
-                        .slice(0, 10)}.pdf`
-                    )
-                  }}
-                >
-                  ⚡{' '}
-                  {isTamil
-                    ? 'நேரடி கிளாஸ் PDF'
-                    : 'Instant Glass PDF'}
-                </button>
-              </div>
-            </div>
-
-            {/* Quick Summary Table */}
-            <div className="drawings-summary-table-wrap">
-              <h4>
-                {isTamil
-                  ? `திட்ட சாளரங்களின் சுருக்கம் (${calculationResults.length} சாளரங்கள்)`
-                  : `Project Windows Summary (${calculationResults.length} Windows)`}
-              </h4>
-
-              <table className="drawings-summary-table">
+      {selectedCustomer && (
+        <>
+          <section className="drawings-records-card">
+            <div className="drawings-table-scroll">
+              <table className="drawings-records-table">
                 <thead>
                   <tr>
-                    <th>{isTamil ? 'எண்' : 'S.No'}</th>
-                    <th>
-                      {isTamil ? 'அளவீடு (H × W)' : 'Site Dimensions'}
-                    </th>
-                    <th>{isTamil ? 'மாடல்' : 'Window Model'}</th>
-                    <th>
-                      {isTamil ? 'வெளிப்புற சட்டம்' : 'Outer Frame (OU)'}
-                    </th>
-                    <th>{isTamil ? 'ஷட்டர் அளவு' : 'Sash Cut'}</th>
-                    <th>{isTamil ? 'கண்ணாடி' : 'Glass Cut'}</th>
+                    <th scope="col">#</th>
+                    <th scope="col">Window Number</th>
+                    <th scope="col">Model Name</th>
+                    <th scope="col">Model Type</th>
+                    <th scope="col">Width (mm)</th>
+                    <th scope="col">Height (mm)</th>
+                    {showMeshColumn && <th scope="col">Mesh</th>}
+                    {showMullionColumn && <th scope="col">Mullion</th>}
+                    <th scope="col">Glass Type</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
-
                 <tbody>
-                  {calculationResults.map((result, index) => {
-                    const rowColor = getModelColor(
-                      result.input.modelId,
-                      result.input.identificationColor
-                    )
-
-                    return (
-                      <tr
-                        key={result.id || index}
-                        style={{
-                          borderLeft: `5px solid ${rowColor}`,
-                        }}
+                  {loadingRecords ? (
+                    <tr>
+                      <td
+                        colSpan={
+                          9 +
+                          Number(showMeshColumn) +
+                          Number(showMullionColumn)
+                        }
+                        className="drawings-table-message"
                       >
-                        <td>
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                            }}
-                          >
+                        Loading customer measurements...
+                      </td>
+                    </tr>
+                  ) : records.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={
+                          9 +
+                          Number(showMeshColumn) +
+                          Number(showMullionColumn)
+                        }
+                        className="drawings-table-message"
+                      >
+                        No saved window measurements found for this customer.
+                      </td>
+                    </tr>
+                  ) : (
+                    visibleRecords.map((record, visibleIndex) => {
+                      const recordIndex = (page - 1) * PAGE_SIZE + visibleIndex
+                      const model = WINDOW_MODELS.find(
+                        (item) => item.id === record.result.input.modelId,
+                      )
+                      const unit = record.project.input_unit || 'in'
+                      const unitForConversion =
+                        unit === 'in' ? 'inches' : unit
+                      const height = Number(record.measurement.height)
+                      const width = Number(record.measurement.width)
+                      const heightMm = convertToMm(
+                        height,
+                        unitForConversion,
+                      )
+                      const widthMm = convertToMm(
+                        width,
+                        unitForConversion,
+                      )
+                      const mesh = getMeshPanel(record.result)
+                      const mullion =
+                        record.result.mullionMM ??
+                        record.result.frame.mullionCutMM
+
+                      return (
+                        <tr key={record.measurement.id}>
+                          <td>{recordIndex + 1}</td>
+                          <td>{record.windowLabel}</td>
+                          <td>{model?.name || record.result.ruleProfileName}</td>
+                          <td>
+                            <span>
+                              {getModelType(record.result.input.modelId || '')}
+                            </span>
+                            {model?.shortCode && (
+                              <small className="drawings-model-code">
+                                {model.shortCode}
+                              </small>
+                            )}
+                          </td>
+                          <td>{widthMm || ''}</td>
+                          <td>{heightMm || ''}</td>
+                          {showMeshColumn && (
+                            <td>
+                              {mesh
+                                ? `${mesh.heightMM} × ${mesh.widthMM}`
+                                : ''}
+                            </td>
+                          )}
+                          {showMullionColumn && (
+                            <td>
+                              {mullion !== undefined && mullion > 0
+                                ? mullion
+                                : ''}
+                            </td>
+                          )}
+                          <td />
+                          <td>
                             <span
-                              style={{
-                                display: 'inline-block',
-                                width: '10px',
-                                height: '10px',
-                                borderRadius: '50%',
-                                backgroundColor: rowColor,
-                                border: '1px solid rgba(0, 0, 0, 0.25)',
-                                flexShrink: 0,
-                              }}
-                            />
-
-                            <strong>
-                              {result.input.windowLabel ||
-                                `W${index + 1}`}
-                            </strong>
-                          </div>
-                        </td>
-
-                        <td>
-                          {result.input.heightInch}" ×{' '}
-                          {result.input.widthInch}" (
-                          {result.convertedHeightMM} ×{' '}
-                          {result.convertedWidthMM} mm)
-                        </td>
-
-                        <td>
-                          <span
-                            className="drawings-model-pill"
-                            style={{
-                              backgroundColor: rowColor,
-                              color: '#0f172a',
-                              border: '1px solid rgba(0, 0, 0, 0.15)',
-                              fontWeight: 600,
-                            }}
-                          >
-                            {result.ruleProfileName}
-                          </span>
-                        </td>
-
-                        <td>
-                          <strong>
-                            {result.frame.leftRightCutMM} ×{' '}
-                            {result.frame.topBottomCutMM} mm
-                          </strong>
-                        </td>
-
-                        <td>
-                          {result.panel && result.panel.heightMM > 0
-                            ? `${result.panel.heightMM} × ${result.panel.widthMM} mm (${result.panel.count * 2} pcs)`
-                            : '-'}
-                        </td>
-
-                        <td>
-                          {result.mirror && result.mirror.count > 0
-                            ? `${result.mirror.heightMM} × ${result.mirror.widthMM} mm (${result.mirror.count} pcs)`
-                            : '-'}
-                        </td>
-                      </tr>
-                    )
-                  })}
+                              className={`drawings-status ${getStatusClass(
+                                record.measurement.status,
+                              )}`}
+                            >
+                              {getStatusLabel(record.measurement.status)}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="drawings-row-actions">
+                              <button
+                                type="button"
+                                className="drawings-row-button"
+                                onClick={() => startView(recordIndex)}
+                                aria-label={`View ${record.windowLabel}`}
+                              >
+                                <Eye aria-hidden="true" size={15} />
+                                View
+                              </button>
+                              <button
+                                type="button"
+                                className="drawings-row-button"
+                                onClick={() =>
+                                  downloadPdf('workshop', [record.result], record.project)
+                                }
+                                aria-label={`Download workshop PDF for ${record.windowLabel}`}
+                              >
+                                <Download aria-hidden="true" size={15} />
+                                PDF
+                              </button>
+                              {onOpenMeasurements && (
+                                <button
+                                  type="button"
+                                  className="drawings-row-button edit"
+                                  onClick={() =>
+                                    onOpenMeasurements(
+                                      record.project.id,
+                                      selectedCustomer,
+                                    )
+                                  }
+                                  aria-label={`Edit ${record.windowLabel} measurements`}
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* Export Modal */}
-      <A4FabricationModal
-        isOpen={isExportModalOpen}
-        onClose={() => setIsExportModalOpen(false)}
-        results={calculationResults}
-        initialSheetType={exportSheetType}
-        language={language}
-        initialCustomerName={selectedOrder?.customerName || ''}
-        initialCustomerPhone={selectedOrder?.customerPhone || ''}
-        projectName={selectedOrder?.projectName || ''}
-        projectSerial={selectedOrder?.serialNumber || ''}
-      />
+            <footer className="drawings-table-footer">
+              <span>
+                Showing {firstVisibleRecord} to {lastVisibleRecord} of{' '}
+                {records.length} entries
+              </span>
+              <div className="drawings-pagination" aria-label="Table pagination">
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={page <= 1}
+                  aria-label="Previous page"
+                >
+                  ‹
+                </button>
+                <span aria-current="page">{page}</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPage((current) => Math.min(totalPages, current + 1))
+                  }
+                  disabled={page >= totalPages}
+                  aria-label="Next page"
+                >
+                  ›
+                </button>
+              </div>
+            </footer>
+          </section>
+
+          {pdfError && (
+            <p className="drawings-error" role="alert">
+              {pdfError}
+            </p>
+          )}
+
+          <section className="drawings-download-sections">
+            <article className="drawings-download-card">
+              <FileSpreadsheet aria-hidden="true" size={48} />
+              <div className="drawings-download-content">
+                <h3>Workshop PDF</h3>
+                <p>Download workshop order with full details</p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadPdf('workshop', calculationResults, singleProject)
+                  }
+                  disabled={records.length === 0 || loadingRecords}
+                >
+                  <Download aria-hidden="true" size={17} />
+                  Download Workshop PDF
+                </button>
+              </div>
+            </article>
+            <article className="drawings-download-card">
+              <Glasses aria-hidden="true" size={48} />
+              <div className="drawings-download-content">
+                <h3>Glass Factory PDF</h3>
+                <p>Download glass specification</p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadPdf('glass', calculationResults, singleProject)
+                  }
+                  disabled={records.length === 0 || loadingRecords}
+                >
+                  <Download aria-hidden="true" size={17} />
+                  Download Glass Factory PDF
+                </button>
+              </div>
+            </article>
+          </section>
+        </>
+      )}
+
+      {viewIndex !== null && calculationResults[viewIndex] && (
+        <section className="drawings-cad-view">
+          <div className="drawings-cad-heading">
+            <h3>
+              Window drawing: {records[viewIndex]?.windowLabel || ''}
+            </h3>
+            <button type="button" onClick={() => setViewIndex(null)}>
+              Back to windows
+            </button>
+          </div>
+          <WindowVisualizer2D
+            results={calculationResults}
+            selectedIndex={viewIndex}
+            onSelectIndex={setViewIndex}
+            language={language}
+            projectName={singleProject?.name || ''}
+            customerSerial={selectedCustomer?.serial_number || ''}
+            customerName={selectedCustomer?.name || ''}
+            onExportPDF={() => openExportModal('workshop')}
+            onExportGlassPDF={() => openExportModal('glass')}
+          />
+        </section>
+      )}
+
+      {isExportModalOpen && selectedCustomer && (
+        <A4FabricationModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          results={calculationResults}
+          initialSheetType={exportSheetType}
+          language={language}
+          initialCustomerName={selectedCustomer.name}
+          initialCustomerPhone={selectedCustomer.phone || ''}
+          customerSerial={selectedCustomer.serial_number || ''}
+          projectName={singleProject?.name || ''}
+          projectSerial={singleProject?.serial_number || ''}
+        />
+      )}
     </div>
   )
 }

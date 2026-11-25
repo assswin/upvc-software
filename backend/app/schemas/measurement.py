@@ -33,8 +33,15 @@ class MeasurementCreate(BaseModel):
     status: str = Field(default="pending", max_length=30)
 
 
+class MeasurementBatchItem(MeasurementCreate):
+    id: UUID | None = None
+
+    model_config = ConfigDict(protected_namespaces=())
+
+
 class MeasurementBatchCreate(BaseModel):
-    measurements: list[MeasurementCreate]
+    measurements: list[MeasurementBatchItem]
+    delete_ids: list[UUID] = Field(default_factory=list)
 
 
 class MeasurementStatusUpdate(BaseModel):

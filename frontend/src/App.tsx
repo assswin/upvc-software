@@ -3,7 +3,6 @@ import { useState } from 'react'
 
 import Customers, {
   type Customer,
-  type Project,
 } from './pages/Customers'
 
 import Sidebar, {
@@ -46,12 +45,6 @@ function App() {
   function handleNewOrder(customer: Customer) {
     setSelectedCustomer(customer)
     setSelectedProjectId(null)
-    setActivePage('measurementsOrders')
-  }
-
-  function handleUpdateOrder(customer: Customer, project: Project) {
-    setSelectedCustomer(customer)
-    setSelectedProjectId(project.id)
     setActivePage('measurementsOrders')
   }
 
@@ -101,7 +94,6 @@ function App() {
             selectedCustomer={selectedCustomer}
             onSelectCustomer={setSelectedCustomer}
             onNewOrder={handleNewOrder}
-            onUpdateOrder={handleUpdateOrder}
           />
         ) : activePage === 'measurementsOrders' ? (
           <Measurements
@@ -114,8 +106,9 @@ function App() {
           <Drawings
             language={language}
             initialProjectId={selectedProjectId}
-            onOpenMeasurements={(projId) => {
+            onOpenMeasurements={(projId, customer) => {
               if (projId) setSelectedProjectId(projId)
+              if (customer) setSelectedCustomer(customer)
               setActivePage('measurementsOrders')
             }}
           />

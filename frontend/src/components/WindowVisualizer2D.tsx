@@ -30,7 +30,7 @@ export interface WindowVisualizer2DProps {
   isTamil?: boolean;
   onClose?: () => void;
   projectName?: string;
-  projectSerial?: string;
+  customerSerial?: string;
   customerName?: string;
 }
 
@@ -41,7 +41,7 @@ export const WindowVisualizer2D: React.FC<WindowVisualizer2DProps> = ({
   language = 'en',
   isTamil: isTamilProp,
   projectName = '',
-  projectSerial = '',
+  customerSerial = '',
   customerName = '',
 }) => {
   const isTamil = isTamilProp ?? language === 'ta';
@@ -153,14 +153,14 @@ export const WindowVisualizer2D: React.FC<WindowVisualizer2DProps> = ({
         doc.setTextColor(isWhite ? 15 : 248, isWhite ? 23 : 250, isWhite ? 42 : 252);
         doc.text('L.S. INTERIORS — ARCHITECTURAL 2D CAD BLUEPRINT', 12, 13);
 
-        // Project Serial & Customer
-        if (projectSerial) {
+        // Customer serial is persistent and shared across the customer's PDFs.
+        if (customerSerial) {
           doc.setFillColor(isWhite ? 37 : 29, isWhite ? 99 : 78, isWhite ? 235 : 216);
           doc.roundedRect(255, 8.5, 28, 6.5, 1, 1, 'F');
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(8);
           doc.setTextColor(255, 255, 255);
-          doc.text(projectSerial, 269, 13, { align: 'center' });
+          doc.text(customerSerial, 269, 13, { align: 'center' });
         }
 
         // Subheader Info
@@ -212,7 +212,10 @@ export const WindowVisualizer2D: React.FC<WindowVisualizer2DProps> = ({
         }
       }
 
-      const fileName = `LS_Interiors_2D_CAD_Blueprints_${projectSerial || 'PROJ'}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const serialPart = customerSerial
+        ? `_${customerSerial.replace(/[^a-z0-9-]/gi, '_')}`
+        : '';
+      const fileName = `LS_Interiors_2D_CAD_Blueprints${serialPart}_${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(fileName);
     } catch (err) {
       console.error('Failed to generate 2D CAD PDF:', err);
@@ -1217,7 +1220,7 @@ export const WindowVisualizer2D: React.FC<WindowVisualizer2DProps> = ({
             <span>{t('2D ஆர்க்கிடெக்சரல் வரைபடங்கள்', '2D Architectural CAD Blueprints')}</span>
           </h3>
           <span className="visualizer-badge">PRO CAD</span>
-          {projectSerial && (
+          {customerSerial && (
             <span
               style={{
                 backgroundColor: '#2563eb',
@@ -1229,7 +1232,7 @@ export const WindowVisualizer2D: React.FC<WindowVisualizer2DProps> = ({
                 fontFamily: 'monospace',
               }}
             >
-              {projectSerial}
+              {customerSerial}
             </span>
           )}
         </div>

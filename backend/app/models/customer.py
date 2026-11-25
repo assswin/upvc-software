@@ -50,6 +50,12 @@ class Customer(Base):
         nullable=True,
     )
 
+    serial_number: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
     email: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,

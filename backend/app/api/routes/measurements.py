@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_shop
@@ -130,7 +131,7 @@ def create_measurement(
     return measurement
 
 
-# BATCH CREATE OR REPLACE MEASUREMENTS
+# BATCH SYNCHRONIZE MEASUREMENTS
 @router.post(
     "/batch",
     response_model=list[MeasurementResponse],
@@ -144,79 +145,151 @@ def batch_create_measurements(
 ):
     project = get_active_project(project_id, db, shop)
 
-    # Delete existing measurements for this project to maintain
-    # atomic synchronization.
     existing_stmt = select(Measurement).where(
         Measurement.project_id == project.id,
         Measurement.shop_id == shop.id,
     )
+    existing_measurements = list(db.scalars(existing_stmt).all())
+    existing_by_id = {
+        measurement.id: measurement
+        for measurement in existing_measurements
+    }
 
-    for existing in db.scalars(existing_stmt).all():
-        db.delete(existing)
+    measurement_ids = [
+        item.id
+        for item in batch_data.measurements
+        if item.id is not None
+    ]
+    if len(measurement_ids) != len(set(measurement_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Measurement IDs must be unique within a batch.",
+        )
+    row_orders = [
+        item.row_order
+        for item in batch_data.measurements
+    ]
+    if len(row_orders) != len(set(row_orders)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Measurement row orders must be unique within a batch.",
+        )
 
-    created_measurements = []
+    delete_ids = set(batch_data.delete_ids)
+    if delete_ids.intersection(measurement_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A measurement cannot be updated and deleted in the same batch.",
+        )
+
+    submitted_ids = set(measurement_ids).union(delete_ids)
+    ids_outside_project = submitted_ids.difference(existing_by_id)
+    if ids_outside_project:
+        conflicting_id = db.scalar(
+            select(Measurement.id)
+            .where(Measurement.id.in_(ids_outside_project))
+            .limit(1)
+        )
+        if conflicting_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A measurement ID is already in use outside this project.",
+            )
+
+    synchronized_measurements: list[Measurement] = []
 
     for item in batch_data.measurements:
         input_unit = item.input_unit or project.input_unit
-
-        measurement = Measurement(
-            shop_id=shop.id,
-            project_id=project.id,
-            row_order=item.row_order,
-            height=item.height,
-            width=item.width,
-            input_unit=input_unit,
-            height_mm=convert_to_mm(
-                item.height,
-                input_unit,
-            ),
-            width_mm=convert_to_mm(
-                item.width,
-                input_unit,
-            ),
-            model_id=item.model_id,
-            variant_letter=item.variant_letter or "",
-            glass_type=item.glass_type,
-            tolerance_mm=(
-                item.tolerance_mm
-                if item.tolerance_mm is not None
-                else project.default_tolerance_mm
-            ),
-            apply_tolerance=(
-                item.apply_tolerance
-                if item.apply_tolerance is not None
-                else project.default_apply_tolerance
-            ),
-            height_additional_mm=item.height_additional_mm,
-            width_additional_mm=item.width_additional_mm,
-            identification_color=item.identification_color,
-            status=item.status or "pending",
+        measurement = (
+            existing_by_id.get(item.id)
+            if item.id is not None
+            else None
         )
 
-        db.add(measurement)
-        created_measurements.append(measurement)
+        if measurement is None:
+            measurement = Measurement(
+                id=item.id or uuid.uuid4(),
+                shop_id=shop.id,
+                project_id=project.id,
+                tolerance_mm=(
+                    item.tolerance_mm
+                    if item.tolerance_mm is not None
+                    else project.default_tolerance_mm
+                ),
+                apply_tolerance=(
+                    item.apply_tolerance
+                    if item.apply_tolerance is not None
+                    else project.default_apply_tolerance
+                ),
+            )
+            db.add(measurement)
+        else:
+            if item.tolerance_mm is not None:
+                measurement.tolerance_mm = item.tolerance_mm
+            if item.apply_tolerance is not None:
+                measurement.apply_tolerance = item.apply_tolerance
 
-    db.commit()
+        measurement.row_order = item.row_order
+        measurement.height = item.height
+        measurement.width = item.width
+        measurement.input_unit = input_unit
+        measurement.height_mm = convert_to_mm(
+            item.height,
+            input_unit,
+        )
+        measurement.width_mm = convert_to_mm(
+            item.width,
+            input_unit,
+        )
+        measurement.model_id = item.model_id
+        measurement.variant_letter = item.variant_letter or ""
+        measurement.glass_type = item.glass_type
+        measurement.height_additional_mm = item.height_additional_mm
+        measurement.width_additional_mm = item.width_additional_mm
+        measurement.identification_color = item.identification_color
+        measurement.status = item.status or "pending"
+        synchronized_measurements.append(measurement)
 
-    for measurement in created_measurements:
+    for measurement_id in delete_ids:
+        measurement = existing_by_id.get(measurement_id)
+        if measurement is not None:
+            db.delete(measurement)
+
+    try:
+        db.flush()
+
+        remaining_measurements = list(
+            db.scalars(
+                select(Measurement).where(
+                    Measurement.project_id == project.id,
+                    Measurement.shop_id == shop.id,
+                )
+            ).all()
+        )
+        all_finished = bool(remaining_measurements) and all(
+            measurement.status.lower() in ("finished", "completed")
+            for measurement in remaining_measurements
+        )
+        if all_finished:
+            project.status = "completed"
+        elif project.status == "completed":
+            project.status = "active"
+
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Measurement synchronization conflicted with existing data.",
+        ) from exc
+
+    for measurement in synchronized_measurements:
         db.refresh(measurement)
 
-    # Automatically complete the project when all windows
-    # are finished.
-    if created_measurements:
-        all_finished = all(
-            measurement.status.lower() in ("finished", "completed")
-            for measurement in created_measurements
-        )
-
-        if all_finished and project.status != "completed":
-            project.status = "completed"
-            db.commit()
-        elif not all_finished and project.status == "completed":
-            project.status = "active"
-            db.commit()
-
-    return created_measurements
+    return sorted(
+        synchronized_measurements,
+        key=lambda measurement: measurement.row_order,
+    )
 
 
 # GET ALL MEASUREMENTS

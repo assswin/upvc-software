@@ -6,10 +6,8 @@ import { A4FabricationModal } from '../components/A4FabricationModal'
 import { WindowVisualizer2D } from '../components/WindowVisualizer2D'
 import { convertMeasurementsToCalculationResults } from '../utils/cadBridge'
 import { getModelColor } from '../utils/modelColors'
-import {
-  generateProjectSerialNumber,
-  isDuplicateOrderName,
-} from '../utils/projectSerials'
+import { generateProjectSerialNumber } from '../utils/projectSerials'
+import { resolveWindowLabels } from '../utils/windowIdentity'
 import {
   calculateSlidingWindow,
   WINDOW_MODELS,
@@ -29,6 +27,7 @@ type FractionOption = {
 
 type BackendMeasurement = {
   id?: string
+  row_order?: number
   height?: number | string | null
   width?: number | string | null
   model_id?: string | null
@@ -83,6 +82,7 @@ const identificationColors = [
 export type MeasurementRow = {
   id: number
   backendId?: string
+  syncId?: string
   height: string
   width: string
   modelId: string
@@ -152,6 +152,12 @@ const loadSavedOrders = (): SavedOrder[] => {
       return {
         ...order,
         serialNumber: serial,
+        rows: (order.rows || []).map((row) => ({
+          ...row,
+          syncId: row.backendId
+            ? undefined
+            : row.syncId || crypto.randomUUID(),
+        })),
       }
     })
   } catch {
@@ -183,35 +189,6 @@ function numberToVariantLetter(number: number): string {
   return result
 }
 
-function resolveWindowLabels(
-  rows: { variantLetter?: string }[]
-): { label: string; serialNo: string }[] {
-  if (!rows.length) return []
-
-  let currentWindowNumber = 0
-
-  return rows.map((row) => {
-    const letter = row.variantLetter?.toLowerCase().trim() || ''
-
-    if (!letter) {
-      currentWindowNumber++
-    }
-
-    if (currentWindowNumber === 0) {
-      currentWindowNumber = 1
-    }
-
-    return {
-      label: letter
-        ? `W${currentWindowNumber}${letter}`
-        : `W${currentWindowNumber}`,
-      serialNo: letter
-        ? `${currentWindowNumber}${letter}`
-        : String(currentWindowNumber),
-    }
-  })
-}
-
 const createEmptyRow = (
   id: number,
   toleranceMm: number,
@@ -219,6 +196,7 @@ const createEmptyRow = (
   identificationColor: string
 ): MeasurementRow => ({
   id,
+  syncId: crypto.randomUUID(),
   height: '',
   width: '',
   modelId: '',
@@ -312,6 +290,8 @@ function Measurements({
   const [defaultApplyTolerance, setDefaultApplyTolerance] = useState(true)
 
   const lastEmittedRowsRef = useRef<MeasurementRow[] | null>(null)
+  const deletedMeasurementIdsRef = useRef<Set<string>>(new Set())
+  const pendingProjectNameRef = useRef<string | null>(null)
   const prevToleranceRef = useRef<number>(defaultTolerance)
   const prevApplyToleranceRef = useRef<boolean>(defaultApplyTolerance)
   const isInitialMountRef = useRef<boolean>(true)
@@ -362,17 +342,6 @@ function Measurements({
     initialProjectId || null
   )
 
-  const isDuplicateName = useMemo(
-    () =>
-      isDuplicateOrderName(
-        customerName,
-        projectName,
-        currentOrderId,
-        savedOrders
-      ),
-    [customerName, projectName, currentOrderId, savedOrders]
-  )
-
   const currentOrder = useMemo(
     () => savedOrders.find((order) => order.id === currentOrderId),
     [currentOrderId, savedOrders]
@@ -415,6 +384,8 @@ function Measurements({
 
         setCurrentOrderId(project.id)
         setProjectName(project.name)
+        pendingProjectNameRef.current = project.name
+        deletedMeasurementIdsRef.current.clear()
 
         const loadedTolerance = Number(project.default_tolerance_mm) || 5
         const loadedApplyTolerance = project.default_apply_tolerance ?? true
@@ -658,9 +629,10 @@ function Measurements({
         usedLetters.add(nextLetter)
 
         copies.push({
-          ...originalRow,
+          ...structuredClone(originalRow),
           id: nextId++,
           backendId: undefined,
+          syncId: crypto.randomUUID(),
           variantLetter: nextLetter,
         })
       }
@@ -687,6 +659,11 @@ function Measurements({
   }
 
   const deleteRow = (id: number) => {
+    const deletedRow = rows.find((row) => row.id === id)
+    if (deletedRow?.backendId) {
+      deletedMeasurementIdsRef.current.add(deletedRow.backendId)
+    }
+
     setRows((currentRows) => currentRows.filter((row) => row.id !== id))
   }
 
@@ -760,23 +737,50 @@ function Measurements({
   const syncOrderToBackend = async (
     existingProjectId: string | null,
     orderData: ReturnType<typeof getCurrentOrderData>
-  ): Promise<{ id: string; serialNumber: string } | null> => {
+  ): Promise<{
+    id: string
+    serialNumber: string
+    projectName: string
+    rows: MeasurementRow[]
+  } | null> => {
     try {
       const customerId = await getOrCreateCustomerId()
       if (!customerId) return null
 
       let projectId = existingProjectId
       let projectSerial = ''
-
       const isUuid =
         !!projectId &&
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
           projectId
         )
+      let internalProjectName =
+        orderData.projectName || pendingProjectNameRef.current || ''
+
+      if (!internalProjectName && isUuid && projectId) {
+        const existingProjectResponse = await fetch(
+          `/api/projects/${projectId}`
+        )
+        if (!existingProjectResponse.ok) {
+          window.alert('Unable to load the existing measurement order.')
+          return null
+        }
+        const existingProject: BackendProject =
+          await existingProjectResponse.json()
+        internalProjectName = existingProject.name
+        projectSerial = existingProject.serial_number || ''
+      }
+
+      if (!internalProjectName) {
+        internalProjectName = `Measurements ${orderData.orderDate} ${crypto.randomUUID()}`
+      }
+
+      pendingProjectNameRef.current = internalProjectName
+      setProjectName(internalProjectName)
 
       const projectPayload = {
         customer_id: customerId,
-        name: orderData.projectName,
+        name: internalProjectName,
         description: `Order Date: ${orderData.orderDate}`,
         input_unit: orderData.fromUnit,
         output_unit: orderData.toUnit,
@@ -792,17 +796,10 @@ function Measurements({
         })
 
         if (!updateResponse.ok) {
-          const errorData = await updateResponse.json().catch(() => ({}))
-
-          if (
-            errorData?.detail === 'enter unique name' ||
-            String(errorData?.detail).includes('unique name')
-          ) {
-            window.alert('enter unique name')
-            return null
-          }
-
-          projectId = null
+          const errorMessage = await updateResponse.text()
+          console.error('Failed to update project:', errorMessage)
+          window.alert('Unable to update the measurement order.')
+          return null
         } else {
           const updatedProject: BackendProject = await updateResponse.json()
           projectSerial = updatedProject.serial_number || ''
@@ -817,49 +814,86 @@ function Measurements({
         })
 
         if (!createResponse.ok) {
-          const errorData = await createResponse.json().catch(() => ({}))
+          const errorMessage = await createResponse.text()
+          console.error('Failed to create project:', errorMessage)
 
-          if (
-            errorData?.detail === 'enter unique name' ||
-            String(errorData?.detail).includes('unique name')
-          ) {
-            window.alert('enter unique name')
+          if (createResponse.status === 400) {
+            const existingProjectsResponse = await fetch(
+              `/api/projects/?customer_id=${encodeURIComponent(customerId)}`
+            )
+            if (existingProjectsResponse.ok) {
+              const existingProjects: BackendProject[] =
+                await existingProjectsResponse.json()
+              const existingProject = existingProjects.find(
+                (project) =>
+                  project.name.toLocaleLowerCase() ===
+                  internalProjectName.toLocaleLowerCase()
+              )
+              if (existingProject) {
+                projectId = existingProject.id
+                projectSerial = existingProject.serial_number || ''
+              }
+            }
           }
 
-          return null
+          if (!projectId) {
+            window.alert('Unable to create the measurement order.')
+            return null
+          }
+        } else {
+          const createdProject: BackendProject = await createResponse.json()
+          projectId = createdProject.id
+          projectSerial = createdProject.serial_number || ''
         }
-
-        const createdProject: BackendProject = await createResponse.json()
-        projectId = createdProject.id
-        projectSerial = createdProject.serial_number || ''
       }
 
       if (!projectId) return null
 
-      const validRows = orderData.rows.filter(
-        (row) =>
-          (row.height && parseFloat(row.height) > 0) ||
-          (row.width && parseFloat(row.width) > 0)
+      const deleteIds = Array.from(deletedMeasurementIdsRef.current)
+      const rowsToSave = orderData.rows.map((row) => {
+        const syncId = row.backendId
+          ? undefined
+          : row.syncId || crypto.randomUUID()
+        return { ...row, syncId }
+      })
+      const rowsToSaveByLocalId = new Map(
+        rowsToSave.map((row) => [row.id, row])
       )
 
-      const rowsToSave = validRows.length > 0 ? validRows : orderData.rows
+      setRows((currentRows) =>
+        currentRows.map((row) => {
+          const savedRow = rowsToSaveByLocalId.get(row.id)
+          return savedRow && !row.backendId && !row.syncId
+            ? { ...row, syncId: savedRow.syncId }
+            : row
+        })
+      )
 
       const batchPayload = {
-        measurements: rowsToSave.map((row, index) => ({
-          row_order: index + 1,
-          height: row.height ? parseFloat(row.height) : null,
-          width: row.width ? parseFloat(row.width) : null,
-          input_unit: orderData.fromUnit,
-          model_id: row.modelId || null,
-          variant_letter: row.variantLetter || '',
-          glass_type: row.glassType || null,
-          tolerance_mm: row.toleranceMm,
-          apply_tolerance: row.applyTolerance,
-          height_additional_mm: row.heightAdditionalMm || 0,
-          width_additional_mm: row.widthAdditionalMm || 0,
-          identification_color: row.identificationColor || '#FDE68A',
-          status: row.status || 'pending',
-        })),
+        measurements: rowsToSave.map((row, index) => {
+          const id = row.backendId || row.syncId
+          if (!id) {
+            throw new Error('A measurement is missing its synchronization ID.')
+          }
+
+          return {
+            id,
+            row_order: index + 1,
+            height: row.height ? parseFloat(row.height) : null,
+            width: row.width ? parseFloat(row.width) : null,
+            input_unit: orderData.fromUnit,
+            model_id: row.modelId || null,
+            variant_letter: row.variantLetter || '',
+            glass_type: row.glassType || null,
+            tolerance_mm: row.toleranceMm,
+            apply_tolerance: row.applyTolerance,
+            height_additional_mm: row.heightAdditionalMm || 0,
+            width_additional_mm: row.widthAdditionalMm || 0,
+            identification_color: row.identificationColor || '#FDE68A',
+            status: row.status || 'pending',
+          }
+        }),
+        delete_ids: deleteIds,
       }
 
       const batchResponse = await fetch(
@@ -879,7 +913,68 @@ function Measurements({
         return null
       }
 
-      return { id: projectId, serialNumber: projectSerial }
+      const synchronizedRows: BackendMeasurement[] =
+        await batchResponse.json()
+      if (
+        !Array.isArray(synchronizedRows) ||
+        synchronizedRows.length !== rowsToSave.length ||
+        synchronizedRows.some(
+          (measurement) =>
+            !measurement.id ||
+            typeof measurement.row_order !== 'number'
+        )
+      ) {
+        console.error('Measurement synchronization returned invalid row IDs.')
+        return null
+      }
+
+      const backendIdsByOrder = new Map<number, string>()
+      for (const measurement of synchronizedRows) {
+        if (measurement.id && typeof measurement.row_order === 'number') {
+          backendIdsByOrder.set(measurement.row_order, measurement.id)
+        }
+      }
+
+      const savedRows: MeasurementRow[] = []
+      for (const [index, row] of rowsToSave.entries()) {
+        const backendId = backendIdsByOrder.get(index + 1)
+        if (!backendId) {
+          console.error('Measurement synchronization omitted a row ID.')
+          return null
+        }
+
+        savedRows.push({
+          ...row,
+          backendId,
+          syncId: undefined,
+        })
+      }
+      const savedRowsByLocalId = new Map(
+        savedRows.map((row) => [row.id, row])
+      )
+
+      setRows((currentRows) =>
+        currentRows.map((row) => {
+          const savedRow = savedRowsByLocalId.get(row.id)
+          return savedRow
+            ? {
+                ...row,
+                backendId: savedRow.backendId,
+                syncId: undefined,
+              }
+            : row
+        })
+      )
+      for (const deletedId of deleteIds) {
+        deletedMeasurementIdsRef.current.delete(deletedId)
+      }
+
+      return {
+        id: projectId,
+        serialNumber: projectSerial,
+        projectName: internalProjectName,
+        rows: savedRows,
+      }
     } catch (error) {
       console.error('Error syncing order to backend:', error)
       return null
@@ -897,23 +992,6 @@ function Measurements({
       return
     }
 
-    if (!projectName.trim()) {
-      window.alert('Please enter the project / order name.')
-      return
-    }
-
-    if (
-      isDuplicateOrderName(
-        customerName,
-        projectName,
-        currentOrderId,
-        savedOrders
-      )
-    ) {
-      window.alert('enter unique name')
-      return
-    }
-
     const now = new Date().toISOString()
     const orderData = getCurrentOrderData()
 
@@ -928,6 +1006,8 @@ function Measurements({
 
     const orderToSave: SavedOrder = {
       ...orderData,
+      projectName: syncResult.projectName,
+      rows: syncResult.rows,
       id: syncResult.id,
       serialNumber:
         syncResult.serialNumber ||
@@ -938,6 +1018,7 @@ function Measurements({
 
     if (saveOrdersToStorage([...savedOrders, orderToSave])) {
       setCurrentOrderId(orderToSave.id)
+      pendingProjectNameRef.current = syncResult.projectName
       window.alert('Order saved successfully!')
     }
   }
@@ -952,18 +1033,6 @@ function Measurements({
 
     if (!customerName.trim()) {
       window.alert('Please enter the customer name.')
-      return
-    }
-
-    if (!projectName.trim()) {
-      window.alert('Please enter the project / order name.')
-      return
-    }
-
-    if (
-      isDuplicateOrderName(customerName, projectName, targetId, savedOrders)
-    ) {
-      window.alert('enter unique name')
       return
     }
 
@@ -991,6 +1060,8 @@ function Measurements({
     const updatedOrder: SavedOrder = {
       ...(existingOrder || {}),
       ...orderData,
+      projectName: syncResult.projectName,
+      rows: syncResult.rows,
       id: finalId,
       serialNumber,
       createdAt:
@@ -1007,6 +1078,7 @@ function Measurements({
       : [...savedOrders, updatedOrder]
 
     if (saveOrdersToStorage(updatedOrders)) {
+      pendingProjectNameRef.current = syncResult.projectName
       window.alert('Order updated successfully!')
     }
   }
@@ -1022,6 +1094,8 @@ function Measurements({
     setCustomerPhone(selectedCustomer?.phone ?? '')
     setOrderDate(getTodayDate())
     setProjectName('')
+    pendingProjectNameRef.current = null
+    deletedMeasurementIdsRef.current.clear()
     setDefaultTolerance(5)
     setDefaultApplyTolerance(true)
     setFromUnit('in')
@@ -1147,7 +1221,10 @@ function Measurements({
     })
   }
 
-  const windowLabels = useMemo(() => resolveWindowLabels(rows), [rows])
+  const windowLabels = useMemo(
+    () => resolveWindowLabels(rows, fromUnit, customFormulas),
+    [rows, fromUnit, customFormulas]
+  )
 
   const cadCalculationResults = useMemo(
     () =>
@@ -1288,8 +1365,8 @@ function Measurements({
                 {currentOrder.serialNumber}
               </span>
             )}
-            <strong>Editing Saved Project:</strong>{' '}
-            {projectName || 'Current Project'} — Click{' '}
+            <strong>Measurements for:</strong>{' '}
+            {displayedCustomerName || 'Customer'} — Click{' '}
             <strong>Save Order</strong> to save your window changes.
           </span>
           <span
@@ -1426,33 +1503,6 @@ function Measurements({
           />
         </label>
 
-        <label>
-          Project / Order Name
-          <input
-            type="text"
-            placeholder="Enter project name"
-            value={projectName}
-            onChange={(event) => setProjectName(event.target.value)}
-            style={
-              isDuplicateName
-                ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' }
-                : {}
-            }
-          />
-          {isDuplicateName && (
-            <span
-              style={{
-                color: '#dc2626',
-                fontSize: '11px',
-                fontWeight: 700,
-                marginTop: '4px',
-                display: 'block',
-              }}
-            >
-              ⚠️ enter unique name
-            </span>
-          )}
-        </label>
       </div>
 
       <div className="measurement-table-wrapper">
@@ -2003,6 +2053,7 @@ function Measurements({
           language={language}
           initialCustomerName={displayedCustomerName || ''}
           initialCustomerPhone={displayedCustomerPhone || ''}
+          customerSerial={selectedCustomer?.serial_number || ''}
           projectName={projectName || ''}
           projectSerial={currentOrder?.serialNumber || ''}
         />

@@ -140,7 +140,7 @@ export function convertMeasurementsToCalculationResults(
       windowNumber: idx + 1,
       windowLabel: label,
       variantLetter: row.variantLetter || undefined,
-      glassType: (row.glassType || '5mm_single') as any,
+      glassType: row.glassType || '5mm_single',
       modelId: rawModel,
       identificationColor: row.identificationColor,
     };
@@ -228,6 +228,7 @@ export function convertMeasurementsToCalculationResults(
       mirror,
       interlockMM: calc.interlock ?? undefined,
       mullionMM: calc.mullion ?? undefined,
+      mullionPieces: calc.mullionPieces,
       additionalPanels: additionalPanels.length > 0 ? additionalPanels : undefined,
     });
   }

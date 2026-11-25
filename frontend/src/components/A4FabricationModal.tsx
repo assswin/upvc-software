@@ -16,6 +16,7 @@ export interface A4FabricationModalProps {
   isTamil?: boolean;
   initialCustomerName?: string;
   initialCustomerPhone?: string;
+  customerSerial?: string;
   projectName?: string;
   projectSerial?: string;
 }
@@ -29,6 +30,7 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
   isTamil: isTamilProp,
   initialCustomerName = '',
   initialCustomerPhone = '',
+  customerSerial = '',
   projectName = '',
   projectSerial = '',
 }) => {
@@ -41,6 +43,22 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
   const [orderDate, setOrderDate] = useState(() => new Date().toLocaleDateString('en-GB'));
   const [isExporting, setIsExporting] = useState(false);
 
+  const hasMeshOutput = (result: CalculationResult) =>
+    Boolean(
+      result.additionalPanels?.some(
+        (panel) =>
+          /mesh/i.test(panel.shutterType || '') &&
+          panel.heightMM > 0 &&
+          panel.widthMM > 0
+      )
+    );
+  const hasMullionOutput = (result: CalculationResult) => {
+    const mullionLength = result.mullionMM ?? result.frame.mullionCutMM;
+    return mullionLength !== undefined && mullionLength > 0;
+  };
+  const showMeshColumn = results.some(hasMeshOutput);
+  const showMullionColumn = results.some(hasMullionOutput);
+
   if (!isOpen) return null;
 
   const handleDownloadPDF = () => {
@@ -50,6 +68,7 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
       const options = {
         customerName: customerName.trim() || 'General Customer',
         customerPhone: customerPhone.trim(),
+        customerSerial: customerSerial.trim(),
         projectName: projectName.trim(),
         projectSerial: projectSerial.trim(),
         date: orderDate,
@@ -77,6 +96,7 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
       const options = {
         customerName: customerName.trim() || 'General Customer',
         customerPhone: customerPhone.trim(),
+        customerSerial: customerSerial.trim(),
         projectName: projectName.trim(),
         projectSerial: projectSerial.trim(),
         date: orderDate,
@@ -183,7 +203,9 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {projectSerial && (
+                    {(sheetType === 'workshop'
+                      ? customerSerial
+                      : projectSerial) && (
                       <span
                         style={{
                           backgroundColor: '#2563eb',
@@ -196,7 +218,9 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
                           letterSpacing: '0.5px',
                         }}
                       >
-                        {projectSerial}
+                        {sheetType === 'workshop'
+                          ? customerSerial
+                          : projectSerial}
                       </span>
                     )}
 
@@ -260,7 +284,7 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
                           <div className="a4-sub-th">(H × W)</div>
                         </th>
 
-                        <th colSpan={2} style={{ width: '190px' }}>
+                        <th colSpan={3} style={{ width: '250px' }}>
                           Model Details
                         </th>
 
@@ -268,9 +292,17 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
                           Sash Cut (mm)
                         </th>
 
-                        <th rowSpan={2} style={{ width: '80px' }}>
-                          Mesh (H × W)
-                        </th>
+                        {showMeshColumn && (
+                          <th rowSpan={2} style={{ width: '80px' }}>
+                            Mesh (H × W)
+                          </th>
+                        )}
+
+                        {showMullionColumn && (
+                          <th rowSpan={2} style={{ width: '80px' }}>
+                            Mullion (mm)
+                          </th>
+                        )}
 
                         <th rowSpan={2} style={{ width: '65px' }}>
                           Interlock (mm)
@@ -291,6 +323,7 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
 
                       <tr className="a4-sub-heading">
                         <th style={{ width: '130px' }}>Model Name</th>
+                        <th style={{ width: '60px' }}>Model Type</th>
                         <th style={{ width: '60px' }}>Material</th>
 
                         <th>H</th>
@@ -345,19 +378,16 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
                             (r.panel.count ? r.panel.count * 2 : 2))
                           : '-';
 
-                        const meshPanel = r.additionalPanels?.find((panel) =>
-                          /mesh/i.test(panel.shutterType || '')
+                        const meshPanel = r.additionalPanels?.find(
+                          (panel) =>
+                            /mesh/i.test(panel.shutterType || '') &&
+                            panel.heightMM > 0 &&
+                            panel.widthMM > 0
                         );
 
                         const meshDimensions = meshPanel
                           ? `${meshPanel.heightMM} × ${meshPanel.widthMM}`
                           : '-';
-
-                        const glassType = (
-                          r.mirror?.glassType ||
-                          r.input.glassType ||
-                          ''
-                        ).trim();
 
                         return (
                           <tr key={r.id || i} style={{ backgroundColor: rowColor }}>
@@ -400,6 +430,10 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
                             </td>
 
                             <td className="a4-center">
+                              {modelDef?.shortCode || r.input.modelId}
+                            </td>
+
+                            <td className="a4-center">
                               <span className="a4-material-pill">
                                 {material}
                               </span>
@@ -416,26 +450,19 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
                             <td className="a4-center">{sashHPcs}</td>
                             <td className="a4-center">{sashWPcs}</td>
 
-                            {/* Mesh is positioned after all Sash Cut columns. */}
-                            <td
-                              className="a4-center a4-bold"
-                              style={{
-                                color: meshPanel ? '#047857' : '#94a3b8',
-                                fontSize: '9px',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {meshPanel ? (
-                                <>
-                                  <div>MESH</div>
-                                  <div style={{ fontWeight: 500 }}>
-                                    {meshDimensions} mm
-                                  </div>
-                                </>
-                              ) : (
-                                '-'
-                              )}
-                            </td>
+                            {showMeshColumn && (
+                              <td className="a4-center a4-bold">
+                                {meshPanel ? `${meshDimensions} mm` : ''}
+                              </td>
+                            )}
+
+                            {showMullionColumn && (
+                              <td className="a4-center a4-bold">
+                                {hasMullionOutput(r)
+                                  ? `${r.mullionMM ?? r.frame.mullionCutMM}`
+                                  : ''}
+                              </td>
+                            )}
 
                             <td className="a4-center">
                               {r.interlockMM ? r.interlockMM : '-'}
@@ -463,10 +490,7 @@ export const A4FabricationModal: React.FC<A4FabricationModalProps> = ({
                                 : '-'}
                             </td>
 
-                            {/* Glass Type stays blank unless the user supplied a value. */}
-                            <td className="a4-center" style={{ fontSize: '9.5px' }}>
-                              {glassType}
-                            </td>
+                            <td className="a4-center" />
 
                             {/* Status is intentionally always blank. */}
                             <td className="a4-center" />

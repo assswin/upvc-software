@@ -7,6 +7,7 @@ import { getModelColor, hexToRgb, darkenRgb } from './modelColors';
 export interface PDFExportOptions {
   customerName?: string;
   customerPhone?: string;
+  customerSerial?: string;
   projectName?: string;
   projectSerial?: string;
   date?: string;
@@ -92,12 +93,20 @@ function getModelDefinition(item: CalculationResult) {
   );
 }
 
-function isMeshModel(item: CalculationResult): boolean {
-  return item.input.modelId === '58-2.5' || item.input.modelId === '85-2.5';
+function hasMeshOutput(item: CalculationResult): boolean {
+  return Boolean(
+    item.additionalPanels?.some(
+      (panel) =>
+        /mesh/i.test(panel.shutterType || '') &&
+        panel.heightMM > 0 &&
+        panel.widthMM > 0
+    )
+  );
 }
 
-function isMullionModel(item: CalculationResult): boolean {
-  return item.input.modelId === 'open-double' || item.input.modelId === 'open-triple';
+function hasMullionOutput(item: CalculationResult): boolean {
+  const mullionLength = item.mullionMM ?? item.frame.mullionCutMM;
+  return mullionLength !== undefined && mullionLength > 0;
 }
 
 export function generateWorkshopOrderPDF(
@@ -114,8 +123,7 @@ export function generateWorkshopOrderPDF(
   const shopName = cleanAscii(options.shopName || 'LS INTERIORS');
   const customer = cleanAscii(options.customerName || '');
   const phone = cleanAscii(options.customerPhone || '');
-  const project = cleanAscii(options.projectName || '');
-  const projectSerial = cleanAscii(options.projectSerial || '');
+  const customerSerial = cleanAscii(options.customerSerial || '');
   const dateStr = cleanAscii(options.date || new Date().toLocaleDateString('en-GB'));
 
   const totalPages = Math.max(
@@ -125,8 +133,8 @@ export function generateWorkshopOrderPDF(
 
   // Conditional columns are included only when at least one selected
   // window in this order requires that component.
-  const showMeshColumn = results.some(isMeshModel);
-  const showMullionColumns = results.some(isMullionModel);
+  const showMeshColumn = results.some(hasMeshOutput);
+  const showMullionColumns = results.some(hasMullionOutput);
 
   // The widths are scaled proportionally to keep the table exactly
   // within the available A4 landscape width.
@@ -162,13 +170,6 @@ export function generateWorkshopOrderPDF(
 
     { key: 'interlock', header: 'Interlock', subHeader: '(mm)', width: 12 },
 
-    { key: 'glassH', header: 'H', width: 12, group: 'Glass Cut (mm)' },
-    { key: 'glassW', header: 'W', width: 12, group: 'Glass Cut (mm)' },
-    { key: 'glassQty', header: 'No.Pcs', width: 8, group: 'Glass Cut (mm)' },
-
-    { key: 'glassType', header: 'Glass Type', width: 15 },
-    { key: 'clientFill', header: 'Client Fill', width: 12 },
-
     ...(showMeshColumn
       ? [
           {
@@ -179,6 +180,13 @@ export function generateWorkshopOrderPDF(
           },
         ]
       : []),
+
+    { key: 'glassH', header: 'H', width: 12, group: 'Glass Cut (mm)' },
+    { key: 'glassW', header: 'W', width: 12, group: 'Glass Cut (mm)' },
+    { key: 'glassQty', header: 'No.Pcs', width: 8, group: 'Glass Cut (mm)' },
+
+    { key: 'glassType', header: 'Glass Type', width: 15 },
+    { key: 'clientFill', header: 'Client Fill', width: 12 },
   ];
 
   const totalBaseWidth = baseColumns.reduce((sum, column) => sum + column.width, 0);
@@ -214,21 +222,20 @@ export function generateWorkshopOrderPDF(
     doc.setFontSize(9);
     doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
 
+    doc.setFontSize(8);
     doc.text(
-      `Customer Name : ${customer || '.....................................'}`,
+      doc.splitTextToSize(`Customer Name : ${customer}`, 72).slice(0, 2),
       MARGIN_LEFT,
-      9
+      8
     );
-
     doc.text(
-      `Customer Phone : ${phone || '.....................................'}`,
-      MARGIN_LEFT + 100,
-      9
+      doc.splitTextToSize(`Customer Phone : ${phone}`, 72).slice(0, 2),
+      MARGIN_LEFT,
+      17
     );
-
     doc.setFontSize(13);
     doc.setTextColor(INK_ACCENT[0], INK_ACCENT[1], INK_ACCENT[2]);
-    doc.text(shopName, MARGIN_LEFT + TABLE_WIDTH / 2, 16, {
+    doc.text(shopName, MARGIN_LEFT + TABLE_WIDTH / 2, 14, {
       align: 'center',
     });
 
@@ -236,20 +243,23 @@ export function generateWorkshopOrderPDF(
     doc.setFontSize(8);
     doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
 
-    doc.text(`Date : ${dateStr}`, MARGIN_LEFT + TABLE_WIDTH, 9, {
+    doc.text(
+      `Customer Serial No: ${customerSerial || '—'}`,
+      MARGIN_LEFT + TABLE_WIDTH,
+      8,
+      {
+        align: 'right',
+      }
+    );
+    doc.text(`Date : ${dateStr}`, MARGIN_LEFT + TABLE_WIDTH, 13, {
       align: 'right',
     });
-
-    if (project || projectSerial) {
-      const projectText = [
-        projectSerial ? `Project No: ${projectSerial}` : '',
-        project ? `Project: ${project}` : '',
-      ]
-        .filter(Boolean)
-        .join(' | ');
-
-      doc.text(projectText, MARGIN_LEFT, 19);
-    }
+    doc.text(
+      `Total Windows: ${results.length}`,
+      MARGIN_LEFT + TABLE_WIDTH,
+      18,
+      { align: 'right' }
+    );
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
@@ -541,12 +551,12 @@ export function generateWorkshopOrderPDF(
         cellText('sashWPcs', sashWidthPieces, 7);
 
         // Mullion: only Open Double and Open Triple use this column.
-        if (showMullionColumns && isMullionModel(item)) {
+        if (showMullionColumns && hasMullionOutput(item)) {
           const mullionLength =
             item.mullionMM ?? item.frame.mullionCutMM ?? null;
 
-          const mullionPieces =
-            item.input.modelId === 'open-triple' ? 2 : 1;
+          const mullionPieces = item.mullionPieces ??
+            (item.input.modelId === 'open-triple' ? 2 : 1);
 
           cellText(
             'mullionH',
@@ -603,20 +613,15 @@ export function generateWorkshopOrderPDF(
           7
         );
 
-        // Glass Type remains blank unless a value is supplied.
-        const glassType = cleanAscii(
-          item.mirror?.glassType || item.input.glassType || ''
-        );
-
-        cellText('glassType', glassType, 6.2);
-
         // Client Fill is deliberately left empty for the user/workshop.
         // No automatic status or default text is inserted.
 
-        // Mesh: only 2.5-track models use this column.
-        if (showMeshColumn && isMeshModel(item)) {
-          const meshPanel = item.additionalPanels?.find((panel) =>
-            /mesh/i.test(panel.shutterType || '')
+        if (showMeshColumn && hasMeshOutput(item)) {
+          const meshPanel = item.additionalPanels?.find(
+            (panel) =>
+              /mesh/i.test(panel.shutterType || '') &&
+              panel.heightMM > 0 &&
+              panel.widthMM > 0
           );
 
           if (meshPanel) {
@@ -923,23 +928,8 @@ export function generateGlassFactoryOrderPDF(
               doc.text(`${sqft} sq.ft`, colX + col.width / 2, centerY + 1, { align: 'center' });
               break;
 
-            case 6: {
-              const glassType = cleanAscii(item.mirror.glassType || item.input.glassType || '');
-
-              doc.setFont('helvetica', 'bold');
-              doc.setFontSize(8.5);
-              doc.setTextColor(INK_DEEP[0], INK_DEEP[1], INK_DEEP[2]);
-
-              if (glassType) {
-                doc.text(glassType, colX + 2, centerY - 1);
-              }
-
-              doc.setFont('helvetica', 'normal');
-              doc.setFontSize(7);
-              doc.setTextColor(INK_SECONDARY[0], INK_SECONDARY[1], INK_SECONDARY[2]);
-              doc.text('Polished Edges | 0mm Tol', colX + 2, centerY + 4);
+            case 6:
               break;
-            }
           }
         }
 

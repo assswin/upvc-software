@@ -1,5 +1,6 @@
 
 import uuid
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
@@ -20,6 +21,40 @@ router = APIRouter(
 )
 
 
+def generate_customer_serial(db: Session, shop: Shop) -> str:
+    while True:
+        serial_number = f"CUST-{uuid4().hex[:8].upper()}"
+        existing = db.scalar(
+            select(Customer).where(
+                Customer.shop_id == shop.id,
+                Customer.serial_number == serial_number,
+            )
+        )
+        if existing is None:
+            return serial_number
+
+
+def validate_unique_serial(
+    db: Session,
+    shop: Shop,
+    serial_number: str,
+    current_customer_id: uuid.UUID | None = None,
+) -> None:
+    statement = select(Customer).where(
+        Customer.shop_id == shop.id,
+        Customer.serial_number == serial_number,
+    )
+    if current_customer_id is not None:
+        statement = statement.where(Customer.id != current_customer_id)
+
+    duplicate = db.scalar(statement)
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Customer serial number already exists in this shop.",
+        )
+
+
 @router.post(
     "/",
     response_model=CustomerResponse,
@@ -37,6 +72,11 @@ def create_customer(
     cleaned_email = (
         customer_data.email.lower().strip()
         if customer_data.email
+        else None
+    )
+    cleaned_serial = (
+        customer_data.serial_number.strip()
+        if customer_data.serial_number
         else None
     )
 
@@ -61,6 +101,18 @@ def create_customer(
         # Reuse and reactivate the existing customer.
         existing_customer.name = cleaned_name
 
+        if cleaned_serial:
+            validate_unique_serial(
+                db,
+                shop,
+                cleaned_serial,
+                current_customer_id=existing_customer.id,
+            )
+        elif existing_customer.serial_number:
+            cleaned_serial = existing_customer.serial_number
+        else:
+            cleaned_serial = generate_customer_serial(db, shop)
+
         if cleaned_phone:
             existing_customer.phone = cleaned_phone
 
@@ -70,16 +122,25 @@ def create_customer(
         if customer_data.address:
             existing_customer.address = customer_data.address
 
+        if cleaned_serial:
+            existing_customer.serial_number = cleaned_serial
+
         existing_customer.is_active = True
         db.commit()
         db.refresh(existing_customer)
 
         return existing_customer
 
+    if cleaned_serial:
+        validate_unique_serial(db, shop, cleaned_serial)
+    else:
+        cleaned_serial = generate_customer_serial(db, shop)
+
     customer = Customer(
         shop_id=shop.id,
         name=cleaned_name,
         phone=cleaned_phone,
+        serial_number=cleaned_serial,
         email=cleaned_email,
         address=customer_data.address,
     )
@@ -163,8 +224,28 @@ def update_customer(
             detail="Customer not found.",
         )
 
+    cleaned_phone = (
+        customer_data.phone.strip()
+        if customer_data.phone
+        else None
+    )
+    cleaned_serial = (
+        customer_data.serial_number.strip()
+        if customer_data.serial_number
+        else customer.serial_number
+    )
+
+    if cleaned_serial:
+        validate_unique_serial(
+            db,
+            shop,
+            cleaned_serial,
+            current_customer_id=customer.id,
+        )
+
     customer.name = customer_data.name.strip()
-    customer.phone = customer_data.phone
+    customer.phone = cleaned_phone
+    customer.serial_number = cleaned_serial
     customer.email = (
         customer_data.email.lower()
         if customer_data.email

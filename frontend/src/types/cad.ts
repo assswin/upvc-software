@@ -31,7 +31,7 @@ export interface WindowInput {
   weldingAllowanceMM?: number;
   profileSeries?: UPVCSeries;
   reinforcementSteel?: boolean;
-  glassType?: GlassType;
+  glassType?: string;
   windowNumber?: number;
   windowLabel?: string;
   variantLetter?: string;
@@ -119,6 +119,7 @@ export interface CalculationResult {
   mirror: MirrorOutput;
   interlockMM?: number;
   mullionMM?: number;
+  mullionPieces?: number | null;
   reinforcementSteel?: ReinforcementSteelCut[];
   reinforcements?: ReinforcementSteelCut[];
   glassBeads?: GlassBeadOutput;

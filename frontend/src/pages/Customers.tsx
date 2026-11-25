@@ -2,13 +2,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Language } from '../components/Sidebar'
-import { matchesProjectSerial } from '../utils/projectSerials'
 import './Customers.css'
 
 export type Customer = {
   id: string
   name: string
   phone: string | null
+  serial_number?: string | null
   email: string | null
   address: string | null
   is_active: boolean
@@ -30,19 +30,18 @@ export type Project = {
 }
 
 type StatusFilter = 'all' | 'active' | 'inactive'
-type ProjectFilter = 'all' | 'with-projects' | 'without-projects'
 
 type Props = {
   language: Language
   selectedCustomer: Customer | null
   onSelectCustomer: (customer: Customer | null) => void
   onNewOrder: (customer: Customer) => void
-  onUpdateOrder: (customer: Customer, project: Project) => void
 }
 
 type CustomerForm = {
   name: string
   phone: string
+  serialNumber: string
   email: string
   address: string
 }
@@ -50,6 +49,7 @@ type CustomerForm = {
 const EMPTY_FORM: CustomerForm = {
   name: '',
   phone: '',
+  serialNumber: '',
   email: '',
   address: '',
 }
@@ -59,23 +59,20 @@ function Customers({
   selectedCustomer,
   onSelectCustomer,
   onNewOrder,
-  onUpdateOrder,
 }: Props) {
   const isTamil = language === 'ta'
 
   const [customers, setCustomers] = useState<Customer[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] =
     useState<StatusFilter>('all')
-  const [projectFilter, setProjectFilter] =
-    useState<ProjectFilter>('all')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [editingCustomer, setEditingCustomer] =
     useState<Customer | null>(null)
+  const [isAddingCustomer, setIsAddingCustomer] = useState(false)
   const [form, setForm] = useState<CustomerForm>(EMPTY_FORM)
 
   const t = (english: string, tamil: string) =>
@@ -83,28 +80,19 @@ function Customers({
 
   async function loadData() {
     try {
-      const [customerResponse, projectResponse] =
-        await Promise.all([
-          fetch('/api/customers/?include_inactive=true'),
-          fetch('/api/projects/'),
-        ])
+      const customerResponse = await fetch(
+        '/api/customers/?include_inactive=true',
+      )
 
       if (!customerResponse.ok) {
         throw new Error('Unable to load customers.')
       }
 
-      if (!projectResponse.ok) {
-        throw new Error('Unable to load projects.')
-      }
-
       const customerData: Customer[] =
         await customerResponse.json()
-      const projectData: Project[] =
-        await projectResponse.json()
 
       setError('')
       setCustomers(customerData)
-      setProjects(projectData)
 
       try {
         localStorage.setItem(
@@ -131,11 +119,8 @@ function Customers({
         if (localCustomers) {
           setCustomers(JSON.parse(localCustomers))
         }
-
-        setProjects([])
       } catch {
         setCustomers([])
-        setProjects([])
       }
     } finally {
       setLoading(false)
@@ -151,11 +136,6 @@ function Customers({
       window.clearTimeout(timerId)
     }
   }, [])
-
-  const projectCount = (customerId: string) =>
-    projects.filter(
-      (project) => project.customer_id === customerId,
-    ).length
 
   const filteredCustomers = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -175,52 +155,16 @@ function Customers({
         return false
       }
 
-      const count = projects.filter(
-        (project) => project.customer_id === customer.id,
-      ).length
-
-      if (
-        projectFilter === 'with-projects' &&
-        count === 0
-      ) {
-        return false
-      }
-
-      if (
-        projectFilter === 'without-projects' &&
-        count !== 0
-      ) {
-        return false
-      }
-
       if (!query) return true
 
-      const customerMatch =
+      return (
         customer.name.toLowerCase().includes(query) ||
         customer.id.toLowerCase().includes(query) ||
         (customer.phone ?? '').toLowerCase().includes(query) ||
         (customer.email ?? '').toLowerCase().includes(query)
-
-      if (customerMatch) return true
-
-      return projects.some((project) => {
-        if (project.customer_id !== customer.id) {
-          return false
-        }
-
-        return (
-          project.name.toLowerCase().includes(query) ||
-          matchesProjectSerial(project.serial_number, query)
-        )
-      })
-    })
-  }, [customers, projects, search, statusFilter, projectFilter])
-
-  const selectedProjects = selectedCustomer
-    ? projects.filter(
-        (project) => project.customer_id === selectedCustomer.id,
       )
-    : []
+    })
+  }, [customers, search, statusFilter])
 
   const allVisibleSelected =
     filteredCustomers.length > 0 &&
@@ -276,6 +220,7 @@ function Customers({
     setForm({
       name: customer.name,
       phone: customer.phone ?? '',
+      serialNumber: customer.serial_number ?? '',
       email: customer.email ?? '',
       address: customer.address ?? '',
     })
@@ -289,12 +234,39 @@ function Customers({
     setError('')
   }
 
-  async function handleUpdateCustomer(
+  function openAddForm() {
+    setIsAddingCustomer(true)
+    setForm(EMPTY_FORM)
+    setError('')
+  }
+
+  function closeAddForm() {
+    setIsAddingCustomer(false)
+    setForm(EMPTY_FORM)
+    setError('')
+  }
+
+  function updatePhone(value: string) {
+    setForm((previous) => ({
+      ...previous,
+      phone: value.replace(/\D/g, '').slice(0, 10),
+    }))
+  }
+
+  function validateCustomerPhone(phone: string): boolean {
+    if (!phone) return true
+    if (!/^\d{10}$/.test(phone)) {
+      setError('Phone number must contain exactly 10 digits.')
+      return false
+    }
+    return true
+  }
+
+  async function handleCreateCustomer(
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault()
-
-    if (!editingCustomer) return
+    if (!validateCustomerPhone(form.phone.trim())) return
 
     setSaving(true)
     setError('')
@@ -302,6 +274,53 @@ function Customers({
     const payload = {
       name: form.name.trim(),
       phone: form.phone.trim() || null,
+      serial_number: form.serialNumber.trim() || null,
+      email: form.email.trim() || null,
+      address: form.address.trim() || null,
+    }
+
+    try {
+      const response = await fetch('/api/customers/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => null)
+        throw new Error(result?.detail || 'Unable to add customer.')
+      }
+
+      await loadData()
+      closeAddForm()
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : 'Unable to add customer.',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleUpdateCustomer(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault()
+
+    if (!editingCustomer) return
+    if (!validateCustomerPhone(form.phone.trim())) return
+
+    setSaving(true)
+    setError('')
+
+    const payload = {
+      name: form.name.trim(),
+      phone: form.phone.trim() || null,
+      serial_number: form.serialNumber.trim() || null,
       email: form.email.trim() || null,
       address: form.address.trim() || null,
     }
@@ -347,7 +366,7 @@ function Customers({
     const confirmed = window.confirm(
       isTamil
         ? `"${customer.name}" à®µà®¾à®Ÿà®¿à®•à¯à®•à¯ˆà®¯à®¾à®³à®°à¯ˆ Delete à®šà¯†à®¯à¯à®¯à®µà®¾?`
-        : `Move "${customer.name}" to Deleted Customers? Their projects and measurements will be retained and can be restored.`,
+        : `Move "${customer.name}" to Deleted Customers? Their associated records will be retained and can be restored.`,
     )
 
     if (!confirmed) return
@@ -394,7 +413,7 @@ function Customers({
     if (targets.length === 0) return
 
     const confirmed = window.confirm(
-      `Move ${targets.length} selected customer(s) to Deleted Customers? Their projects and measurements will be retained.`,
+      `Move ${targets.length} selected customer(s) to Deleted Customers? Their associated records will be retained.`,
     )
 
     if (!confirmed) return
@@ -528,7 +547,7 @@ function Customers({
     customer: Customer,
   ) {
     const confirmed = window.confirm(
-      `PERMANENTLY DELETE "${customer.name}"?\n\nThis will permanently remove this customer, all their projects, and all associated measurements. This action cannot be undone.`,
+      `PERMANENTLY DELETE "${customer.name}"?\n\nThis will permanently remove this customer, all associated measurement records. This action cannot be undone.`,
     )
 
     if (!confirmed) return
@@ -576,7 +595,7 @@ function Customers({
     if (targets.length === 0) return
 
     const confirmed = window.confirm(
-      `PERMANENTLY DELETE ${targets.length} selected customer(s)?\n\nAll their projects and associated measurements will also be permanently deleted. This action cannot be undone.`,
+      `PERMANENTLY DELETE ${targets.length} selected customer(s)?\n\nAll associated measurement records will also be permanently deleted. This action cannot be undone.`,
     )
 
     if (!confirmed) return
@@ -623,74 +642,6 @@ function Customers({
     }
   }
 
-  function exportCustomersCsv() {
-    const headers = [
-      'S.No',
-      'Customer ID',
-      'Customer Name',
-      'Date',
-      'Phone',
-      'Email',
-      'Address',
-      'Project Count',
-      'Status',
-    ]
-
-    const rows = filteredCustomers.map((customer, index) => [
-      String(index + 1),
-      customer.id,
-      customer.name,
-      customer.created_at ?? '',
-      customer.phone ?? '',
-      customer.email ?? '',
-      customer.address ?? '',
-      String(projectCount(customer.id)),
-      customer.is_active ? 'Active' : 'Deleted',
-    ])
-
-    const escapeCsv = (value: string) =>
-      `"${value.replace(/"/g, '""')}"`
-
-    const csv = [
-      headers,
-      ...rows,
-    ]
-      .map((row) => row.map(escapeCsv).join(','))
-      .join('\r\n')
-
-    const blob = new Blob(
-      ['\uFEFF', csv],
-      { type: 'text/csv;charset=utf-8;' },
-    )
-
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-
-    link.href = url
-    link.download = 'ls-interiors-customers.csv'
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
-  }
-
-  function formatDate(value?: string) {
-    if (!value) return '—'
-
-    const date = new Date(value)
-
-    if (Number.isNaN(date.getTime())) return '—'
-
-    return date.toLocaleDateString(
-      isTamil ? 'ta-IN' : 'en-IN',
-      {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      },
-    )
-  }
-
   return (
     <div className="customers-workspace">
       <div className="customers-toolbar">
@@ -700,7 +651,7 @@ function Customers({
           </h2>
           <p>
             {t(
-              'View and manage customers, projects and records.',
+              'View and manage customer records.',
               'à®µà®¾à®Ÿà®¿à®•à¯à®•à¯ˆà®¯à®¾à®³à®°à¯à®•à®³à¯, à®¤à®¿à®Ÿà¯à®Ÿà®™à¯à®•à®³à¯ à®®à®±à¯à®±à¯à®®à¯ à®ªà®¤à®¿à®µà¯à®•à®³à¯ˆ à®¨à®¿à®°à¯à®µà®•à®¿à®•à¯à®•à®µà¯à®®à¯.',
             )}
           </p>
@@ -710,18 +661,10 @@ function Customers({
           <button
             type="button"
             className="customer-secondary-button"
-            onClick={exportCustomersCsv}
-            disabled={filteredCustomers.length === 0}
+            onClick={openAddForm}
+            disabled={saving}
           >
-            {t('Export Excel', 'Excel à®à®±à¯à®±à¯à®®à®¤à®¿')}
-          </button>
-
-          <button
-            type="button"
-            className="customer-secondary-button"
-            onClick={() => window.print()}
-          >
-            {t('Export PDF', 'PDF à®à®±à¯à®±à¯à®®à®¤à®¿')}
+            {t('Add Customer', 'வாடிக்கையாளர் சேர்க்க')}
           </button>
         </div>
       </div>
@@ -767,10 +710,7 @@ function Customers({
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder={t(
-              'Search name, customer ID, phone, email or project...',
-              'à®ªà¯†à®¯à®°à¯, à®µà®¾à®Ÿà®¿à®•à¯à®•à¯ˆà®¯à®¾à®³à®°à¯ ID, à®¤à¯Šà®²à¯ˆà®ªà¯‡à®šà®¿ à®…à®²à¯à®²à®¤à¯ à®¤à®¿à®Ÿà¯à®Ÿà®¤à¯à®¤à¯ˆà®¤à¯ à®¤à¯‡à®Ÿà®µà¯à®®à¯...',
-            )}
+            placeholder={t('Search name, customer ID, phone or email...', 'வாடிக்கையாளர் பெயர், ID, தொலைபேசி அல்லது மின்னஞ்சல் மூலம் தேடு...')}
           />
 
           <select
@@ -788,24 +728,6 @@ function Customers({
             </option>
             <option value="inactive">
               {t('Deleted Customers', 'Deleted Customers')}
-            </option>
-          </select>
-
-          <select
-            value={projectFilter}
-            onChange={(event) =>
-              setProjectFilter(event.target.value as ProjectFilter)
-            }
-            aria-label={t('Project filter', 'à®¤à®¿à®Ÿà¯à®Ÿ à®µà®Ÿà®¿à®•à®Ÿà¯à®Ÿà®¿')}
-          >
-            <option value="all">
-              {t('All projects', 'à®…à®©à¯ˆà®¤à¯à®¤à¯ à®¤à®¿à®Ÿà¯à®Ÿà®™à¯à®•à®³¯')}
-            </option>
-            <option value="with-projects">
-              {t('With projects', 'à®¤à®¿à®Ÿà¯à®Ÿà®™à¯à®•à®³¯ à®‰à®³à¯à®³à®µà¯ˆ')}
-            </option>
-            <option value="without-projects">
-              {t('Without projects', 'à®¤à®¿à®Ÿà¯à®Ÿà®™à¯à®•à®³¯ à®‡à®²à¯à®²à®¾à®¤à®µà¯ˆ')}
             </option>
           </select>
         </div>
@@ -881,33 +803,25 @@ function Customers({
             <table className="customer-table">
               <thead>
                 <tr>
-                  <th>
+                  <th>{t('Customer ID', 'வாடிக்கையாளர் ID')}</th>
+                  <th className="customer-name-header">
                     <input
                       type="checkbox"
                       checked={allVisibleSelected}
                       onChange={(event) =>
                         toggleSelectAll(event.target.checked)
                       }
-                      aria-label={t('Select all customers', 'à®…à®©à¯ˆà®µà®°à¯ˆà®¯à¯à®®à¯ à®¤à¯‡à®°à¯à®µà¯')}
+                      aria-label={t('Select all customers', 'அனைத்து வாடிக்கையாளர்களையும் தேர்வு செய்')}
                     />
+                    {t('Customer Name', 'வாடிக்கையாளர் பெயர்')}
                   </th>
-                  <th>{t('S.No', 'à®µ.à®Žà®£à¯')}</th>
-                  <th>{t('Customer ID', 'à®µà®¾à®Ÿà®¿à®•à¯à®•à¯ˆà®¯à®¾à®³à®°à¯ ID')}</th>
-                  <th>{t('Customer Name', 'à®µà®¾à®Ÿà®¿à®•à¯à®•à¯ˆà®¯à®¾à®³à®°à¯ à®ªà¯†à®¯à®°à¯')}</th>
-                  <th>{t('Date', 'à®¤à¯‡à®¤à®¿')}</th>
-                  <th>{t('Phone Number', 'à®¤à¯Šà®²à¯ˆà®ªà¯‡à®šà®¿ à®Žà®£à¯')}</th>
-                  <th>{t('Projects', 'à®¤à®¿à®Ÿà¯à®Ÿà®™à¯à®•à®³¯')}</th>
-                  <th>{t('Details', 'à®µà®¿à®µà®°à®™à¯à®•à®³¯')}</th>
-                  <th>{t('Status', 'à®¨à®¿à®²à¯ˆ')}</th>
-                  <th>{t('Actions', 'à®šà¯†à®¯à®²à¯à®•à®³¯')}</th>
+                  <th>{t('Customer Phone Number', 'வாடிக்கையாளர் தொலைபேசி எண்')}</th>
                 </tr>
               </thead>
 
               <tbody>
-                {filteredCustomers.map((customer, index) => {
-                  const count = projectCount(customer.id)
-                  const isSelected =
-                    selectedCustomer?.id === customer.id
+                {filteredCustomers.map((customer) => {
+                  const isSelected = selectedCustomer?.id === customer.id
 
                   return (
                     <tr
@@ -915,120 +829,76 @@ function Customers({
                       className={isSelected ? 'selected-row' : ''}
                     >
                       <td>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.includes(customer.id)}
-                          onChange={(event) =>
-                            toggleCustomerSelection(
-                              customer.id,
-                              event.target.checked,
-                            )
-                          }
-                          aria-label={`Select ${customer.name}`}
-                        />
-                      </td>
-
-                      <td>{index + 1}</td>
-
-                      <td>
                         <span className="customer-id">
                           {customer.id.slice(0, 8).toUpperCase()}
                         </span>
                       </td>
-
                       <td>
-                        <strong className="customer-name">
-                          {customer.name}
-                        </strong>
-                      </td>
-
-                      <td>{formatDate(customer.created_at)}</td>
-
-                      <td>{customer.phone || '—'}</td>
-
-                      <td>
-                        <button
-                          type="button"
-                          className="customer-project-count"
-                          onClick={() => onSelectCustomer(customer)}
-                        >
-                          {count}
-                        </button>
-                      </td>
-
-                      <td>
-                        <button
-                          type="button"
-                          className="customer-details-button"
-                          onClick={() => onSelectCustomer(customer)}
-                        >
-                          {t('View Details', 'à®µà®¿à®µà®°à®™à¯à®•à®³¯')}
-                        </button>
-                      </td>
-
-                      <td>
-                        <span
-                          className={`customer-status-badge ${
-                            customer.is_active ? 'active' : 'inactive'
-                          }`}
-                        >
-                          {customer.is_active
-                            ? t('Active', 'à®šà¯†à®¯à®²à®¿à®²à¯')
-                            : t('Deleted', 'Deleted')}
-                        </span>
-                      </td>
-
-                      <td>
-                        <div className="customer-row-actions">
-                          {customer.is_active ? (
-                            <>
-                              <button
-                                type="button"
-                                className="customer-action-button"
-                                onClick={() => openEditForm(customer)}
-                                disabled={saving}
-                              >
-                                {t('Edit', 'à®¤à®¿à®°à¯à®¤à¯à®¤à¯')}
-                              </button>
-
-                              <button
-                                type="button"
-                                className="customer-danger-button"
-                                onClick={() =>
-                                  void deleteCustomer(customer)
-                                }
-                                disabled={saving}
-                              >
-                                {t('Delete', 'Delete')}
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                className="customer-secondary-button"
-                                onClick={() =>
-                                  void restoreCustomer(customer)
-                                }
-                                disabled={saving}
-                              >
-                                {t('Restore', 'Restore')}
-                              </button>
-
-                              <button
-                                type="button"
-                                className="customer-danger-button"
-                                onClick={() =>
-                                  void permanentlyDeleteCustomer(customer)
-                                }
-                                disabled={saving}
-                              >
-                                {t('Permanently Delete', 'Permanently Delete')}
-                              </button>
-                            </>
-                          )}
+                        <div className="customer-name-cell">
+                          <div className="customer-name-identity">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.includes(customer.id)}
+                              onChange={(event) =>
+                                toggleCustomerSelection(
+                                  customer.id,
+                                  event.target.checked,
+                                )
+                              }
+                              aria-label={`Select ${customer.name}`}
+                            />
+                            <button
+                              type="button"
+                              className="customer-details-button"
+                              onClick={() => onSelectCustomer(customer)}
+                            >
+                              {customer.name}
+                            </button>
+                          </div>
+                          <div className="customer-row-actions">
+                            {customer.is_active ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="customer-action-button"
+                                  onClick={() => openEditForm(customer)}
+                                  disabled={saving}
+                                >
+                                  {t('Edit', 'Edit')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="customer-danger-button"
+                                  onClick={() => void deleteCustomer(customer)}
+                                  disabled={saving}
+                                >
+                                  {t('Delete', 'Delete')}
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="customer-secondary-button"
+                                  onClick={() => void restoreCustomer(customer)}
+                                  disabled={saving}
+                                >
+                                  {t('Restore', 'Restore')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="customer-danger-button"
+                                  onClick={() => void permanentlyDeleteCustomer(customer)}
+                                  disabled={saving}
+                                >
+                                  {t('Permanently Delete', 'Permanently Delete')}
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </td>
+                      <td>{customer.phone || '—'}</td>
                     </tr>
                   )
                 })}
@@ -1044,7 +914,7 @@ function Customers({
             <div>
               <h3>{selectedCustomer.name}</h3>
               <p>
-                {t('Customer details and associated projects', 'à®µà®¾à®Ÿà®¿à®•à¯à®•à¯ˆà®¯à®¾à®³à®°à¯ à®µà®¿à®µà®°à®™à¯à®•à®³¯ à®®à®±à¯à®±à¯à®®à¯ à®¤à¯Šà®Ÿà®°à¯à®ªà¯à®Ÿà¯ˆà®¯ à®¤à®¿à®Ÿà¯à®Ÿà®™à¯à®•à®³¯')}
+                {t('Customer contact information', 'வாடிக்கையாளர் தொடர்புத் தகவல்')}
               </p>
             </div>
 
@@ -1079,72 +949,128 @@ function Customers({
             </div>
           </div>
 
-          <div className="customer-projects-heading">
-            <h4>
-              {t('Associated Projects', 'à®¤à¯Šà®Ÿà®°à¯à®ªà¯à®Ÿà¯ˆà®¯ à®¤à®¿à®Ÿà¯à®Ÿà®™à¯à®•à®³¯')}
-              {' '}({selectedProjects.length})
-            </h4>
-
-            {selectedCustomer.is_active && (
-              <button
-                type="button"
-                className="customer-primary-button"
-                onClick={() => onNewOrder(selectedCustomer)}
-              >
-                {t('New Order', 'à®ªà¯à®¤à®¿à®¯ à®†à®°à¯à®Ÿà®°à¯')}
-              </button>
-            )}
-          </div>
-
-          {selectedProjects.length === 0 ? (
-            <p className="customer-empty">
-              {t(
-                'No projects found for this customer.',
-                'à®‡à®¨à¯à®¤ à®µà®¾à®Ÿà®¿à®•à¯à®•à¯ˆà®¯à®¾à®³à®°à¯à®•à¯à®•à¯ à®¤à®¿à®Ÿà¯à®Ÿà®™à¯à®•à®³¯ à®‡à®²à¯à®²à¯ˆ.',
-              )}
-            </p>
-          ) : (
-            <div className="customer-project-list">
-              {selectedProjects.map((project) => (
-                <div
-                  className="customer-project-item"
-                  key={project.id}
-                >
-                  <div>
-                    <strong>{project.name}</strong>
-                    <span>
-                      {project.serial_number || project.id}
-                    </span>
-                    <span>
-                      {t('Input', 'à®‰à®³à¯à®³à¯€à®Ÿà¯')}:{' '}
-                      {project.input_unit.toUpperCase()}
-                      {' · '}
-                      {t('Output', 'à®µà¯†à®³à®¿à®¯à¯€à®Ÿà¯')}:{' '}
-                      {project.output_unit.toUpperCase()}
-                    </span>
-                  </div>
-
-                  <div className="customer-project-actions">
-                    <span className="customer-project-status">
-                      {project.status}
-                    </span>
-
-                    <button
-                      type="button"
-                      className="customer-secondary-button"
-                      onClick={() =>
-                        onUpdateOrder(selectedCustomer, project)
-                      }
-                      disabled={!selectedCustomer.is_active}
-                    >
-                      {t('Open Measurements', 'à®…à®³à®µà¯€à®Ÿà¯à®•à®³¯ˆà®¤à¯ à®¤à®¿à®±')}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+          {selectedCustomer.is_active && (
+            <button
+              type="button"
+              className="customer-primary-button"
+              onClick={() => onNewOrder(selectedCustomer)}
+            >
+              {t('New Order', 'புதிய ஆர்டர்')}
+            </button>
           )}
         </section>
+      )}
+
+      {isAddingCustomer && (
+        <div className="customer-modal-backdrop">
+          <section
+            className="customer-edit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="customer-add-title"
+          >
+            <div className="customer-details-heading">
+              <h3 id="customer-add-title">
+                {t('Add Customer', 'Add Customer')}
+              </h3>
+              <button
+                type="button"
+                className="customer-close-button"
+                onClick={closeAddForm}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCustomer}>
+              <label>
+                {t('Customer Name', 'Customer Name')}
+                <input
+                  required
+                  minLength={2}
+                  maxLength={150}
+                  value={form.name}
+                  onChange={(event) =>
+                    setForm({ ...form, name: event.target.value })
+                  }
+                />
+              </label>
+
+              <label>
+                {t('Phone Number', 'Phone Number')}
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  pattern="[0-9]{10}"
+                  maxLength={20}
+                  value={form.phone}
+                  onChange={(event) => updatePhone(event.target.value)}
+                />
+              </label>
+
+              <label>
+                {t('Customer Serial Number', 'Customer Serial Number')}
+                <input
+                  maxLength={50}
+                  value={form.serialNumber}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      serialNumber: event.target.value,
+                    })
+                  }
+                />
+                <small>
+                  {t(
+                    'Leave blank to generate one automatically.',
+                    'Leave blank to generate one automatically.',
+                  )}
+                </small>
+              </label>
+
+              <label>
+                {t('Email Address', 'Email Address')}
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(event) =>
+                    setForm({ ...form, email: event.target.value })
+                  }
+                />
+              </label>
+
+              <label>
+                {t('Address', 'Address')}
+                <textarea
+                  value={form.address}
+                  onChange={(event) =>
+                    setForm({ ...form, address: event.target.value })
+                  }
+                />
+              </label>
+
+              <div className="customer-form-actions">
+                <button
+                  type="button"
+                  className="customer-secondary-button"
+                  onClick={closeAddForm}
+                  disabled={saving}
+                >
+                  {t('Cancel', 'Cancel')}
+                </button>
+                <button
+                  type="submit"
+                  className="customer-primary-button"
+                  disabled={saving}
+                >
+                  {saving
+                    ? t('Saving...', 'Saving...')
+                    : t('Add Customer', 'Add Customer')}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
       )}
 
       {editingCustomer && (
@@ -1190,12 +1116,23 @@ function Customers({
                 {t('Phone Number', 'à®¤à¯Šà®²à¯ˆà®ªà¯‡à®šà®¿ à®Žà®£à¯')}
                 <input
                   type="tel"
+                  inputMode="numeric"
+                  pattern="[0-9]{10}"
                   maxLength={20}
                   value={form.phone}
+                  onChange={(event) => updatePhone(event.target.value)}
+                />
+              </label>
+
+              <label>
+                {t('Customer Serial Number', 'Customer Serial Number')}
+                <input
+                  maxLength={50}
+                  value={form.serialNumber}
                   onChange={(event) =>
                     setForm({
                       ...form,
-                      phone: event.target.value,
+                      serialNumber: event.target.value,
                     })
                   }
                 />
