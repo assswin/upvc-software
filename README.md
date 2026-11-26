@@ -31,8 +31,12 @@ Built with **React + TypeScript + Vite** (Frontend) and **FastAPI + SQLAlchemy**
 ### Automatic `.env` Email Updates
 * `backend/.env` is reloaded automatically on every OTP request, so changing `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, or `OTP_RECEIVER_EMAIL` takes effect immediately with **no code changes** and **no restart**.
 
-### Customers, Dashboard & Production Fixes
-* **Customers Page:** Added an **Update Order / Measurement** button next to **Edit** and **Delete** in each customer row to jump straight to **Measurements & Orders**.
+### Customers, Per-User Isolation & Production Fixes
+* **Per-User Isolated Data:** Each registered user gets their own dedicated shop (`shop_id`), so customers, projects (`PROJ-1`, `PROJ-2`, ...), measurements, and dashboard analytics are completely private per user.
+* **Customers & Measurements Flow:**
+  * Editable **Customer Serial Number** in Add/Edit Customer modals, displayed directly in the Customers table and details panel.
+  * Adding a customer automatically redirects to **Measurements & Orders**.
+  * Added **Update Order / Measurement** button in each customer row, which opens **Measurements & Orders** and automatically loads that customer's saved project and windows.
 * **Dashboard & Backend Fixes:**
   * `GET /dashboard/stats` and `GET /projects/` are now strictly read-only (no unintended status overwrites).
   * Soft-deleted customers are excluded from Dashboard analytics.
