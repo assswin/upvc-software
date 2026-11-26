@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -7,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_user, get_or_create_default_shop
+from app.api.dependencies import get_current_user
 from app.core.email_service import EmailDeliveryError, mask_email, send_otp_email
 from app.core.security import (
     ALGORITHM,
@@ -23,6 +24,7 @@ from app.core.security import (
 )
 from app.db.dependencies import get_db
 from app.models.auth_tokens import LoginOTP, PasswordResetOTP, PasswordResetToken
+from app.models.shop import Shop
 from app.models.user import User
 from app.schemas.auth import (
     LoginStepResponse,
@@ -57,23 +59,28 @@ def register(
 ):
     cleaned_email = payload.email.lower().strip()
     cleaned_phone = payload.phone.strip() if payload.phone else None
-    shop = get_or_create_default_shop(db)
 
     existing_email = db.scalar(
-        select(User).where(User.shop_id == shop.id, User.email == cleaned_email)
+        select(User).where(User.email == cleaned_email)
     )
     if existing_email:
         raise HTTPException(status_code=400, detail="Email is already registered.")
 
     if cleaned_phone:
         existing_phone = db.scalar(
-            select(User).where(User.shop_id == shop.id, User.phone == cleaned_phone)
+            select(User).where(User.phone == cleaned_phone)
         )
         if existing_phone:
             raise HTTPException(status_code=400, detail="Phone number is already registered.")
 
-    existing_any = db.scalar(select(User.id).where(User.shop_id == shop.id).limit(1))
-    role = "owner" if existing_any is None else "staff"
+    # Create a dedicated isolated Shop for each registered user
+    shop = Shop(
+        name=payload.full_name.strip(),
+        slug=f"user-{uuid.uuid4().hex[:12]}",
+        is_active=True,
+    )
+    db.add(shop)
+    db.flush()
 
     user = User(
         shop_id=shop.id,
@@ -81,7 +88,7 @@ def register(
         email=cleaned_email,
         phone=cleaned_phone,
         password_hash=hash_password(payload.password),
-        role=role,
+        role="owner",
         is_active=True,
         is_logged_in=False,
     )

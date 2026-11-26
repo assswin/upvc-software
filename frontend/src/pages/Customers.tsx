@@ -1030,12 +1030,6 @@ function Customers({
                     })
                   }
                 />
-                <small>
-                  {t(
-                    'Leave blank to generate one automatically.',
-                    'Leave blank to generate one automatically.',
-                  )}
-                </small>
               </label>
 
               <label>
