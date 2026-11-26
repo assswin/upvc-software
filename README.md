@@ -99,76 +99,80 @@ npm run build
 
 ---
 
-## 3. How to Deploy to Vercel
+## 3. How to Deploy Your Website Online (Vercel)
 
-Because this project has a **React Frontend** and a **FastAPI Backend**, deploy the backend first (so you have its URL), then deploy the frontend on Vercel.
+Think of your website in **2 parts**:
+1. **Backend (Python FastAPI)** — handles login, OTP emails, customers, and database.
+2. **Frontend (React Website)** — the visual pages you click on.
 
-### Step 1: Deploy Backend API
-Deploy `backend/` to a Python host (e.g. **Render**, **Railway**, or **Vercel Python**) with:
-* **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-* **Environment Variables:**
-  * `DATABASE_URL` (PostgreSQL connection string, e.g., Neon or Supabase)
-  * `SECRET_KEY`
-  * `ADMIN_PASSCODE`
-  * `GMAIL_ADDRESS`
-  * `GMAIL_APP_PASSWORD`
-  * `OTP_RECEIVER_EMAIL` *(optional)*
-  * `CORS_ORIGINS` = `https://your-vercel-app.vercel.app,https://yourdomain.com`
+> **Important:** Deploy the **Backend first** so you get a live Backend URL, then put that URL into **Vercel** for the Frontend.
 
-### Step 2: Deploy Frontend on Vercel
-1. Go to [vercel.com](https://vercel.com) and click **Add New $\rightarrow$ Project**.
-2. Import your GitHub repository.
-3. Set **Root Directory** to `frontend`.
-4. Confirm build settings:
-   * **Framework Preset:** `Vite`
-   * **Build Command:** `npm run build`
-   * **Output Directory:** `dist`
-5. Add **Environment Variable**:
-   * `VITE_API_BASE_URL` = `https://your-backend-api-url.com` *(no trailing slash)*
-6. Click **Deploy**.
+### Part A: Put Your Backend Online (Render — Free & Easy)
+1. Go to [render.com](https://render.com) and sign in with your **GitHub account**.
+2. Click **New +** $\rightarrow$ **Web Service** $\rightarrow$ select your `upvc-software` repo.
+3. Fill in these settings:
+   * **Root Directory:** `backend`
+   * **Runtime:** `Python 3`
+   * **Build Command:** `pip install -r requirements.txt`
+   * **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+4. Scroll to **Environment Variables** and add these keys (from your `backend/.env`):
+   * `SECRET_KEY` = *(your secret key)*
+   * `ADMIN_PASSCODE` = *(your admin passcode)*
+   * `GMAIL_ADDRESS_ENC` = *(your encrypted `enc1:...` value)*
+   * `GMAIL_APP_PASSWORD_ENC` = *(your encrypted `enc1:...` value)*
+   * `CORS_ORIGINS` = `https://your-site.vercel.app` *(update this after Part B)*
+5. Click **Create Web Service**. Once it says **Live**, copy your Backend URL (for example: `https://upvc-backend.onrender.com`).
 
----
-
-## 4. How to Buy a Domain in Hostinger & Connect to Vercel
-
-### Step 1: Buy Your Domain on Hostinger
-1. Go to [hostinger.com](https://www.hostinger.com) and log in (or create an account).
-2. Click **Domains $\rightarrow$ Get a New Domain**.
-3. Search for your business name (e.g. `lsinteriors.com` or `lsinteriors.in`), choose the `.com` / `.in` extension, and complete checkout.
-4. Verify your domain ownership via the confirmation email Hostinger sends you.
-
-### Step 2: Add the Domain in Vercel
-1. Open your project in **Vercel Dashboard**.
-2. Go to **Settings $\rightarrow$ Domains**.
-3. Type your domain (e.g. `yourdomain.com`) and click **Add**.
-4. Vercel will show you the exact DNS records to add (`A` record and `CNAME` record).
-
-### Step 3: Update DNS Records in Hostinger
-1. In **Hostinger hPanel**, go to **Domains $\rightarrow$ Manage** (select your domain) $\rightarrow$ **DNS / Nameservers**.
-2. Under **DNS Records**, add/update:
-   * **Root domain (`@`):**
-     * Type: `A`
-     * Name: `@`
-     * Points to: `76.76.21.21`
-   * **WWW subdomain (`www`):**
-     * Type: `CNAME`
-     * Name: `www`
-     * Target: `cname.vercel-dns.com`
-3. Save changes. DNS usually connects within **5–30 minutes** (up to 24 hours max), and Vercel automatically issues a free SSL (`https://`) certificate.
-4. *(Important)* Add `https://yourdomain.com,https://www.yourdomain.com` to `CORS_ORIGINS` on your backend!
+### Part B: Put Your Frontend Online (Vercel — Free & Easy)
+1. Go to [vercel.com](https://vercel.com) and sign in with **GitHub**.
+2. Click **Add New...** $\rightarrow$ **Project** $\rightarrow$ **Import** your `upvc-software` repo.
+3. Under **Root Directory**, click **Edit** and select **`frontend`**.
+4. Open **Environment Variables** and add:
+   * **Name:** `VITE_API_BASE_URL`
+   * **Value:** `https://upvc-backend.onrender.com` *(your Backend URL from Part A, no `/` at the end)*
+5. Click **Deploy** and wait 1 minute.
+6. Copy your new live Vercel URL (e.g. `https://upvc-software.vercel.app`) and paste it into `CORS_ORIGINS` on Render (Part A Step 4) so login works!
 
 ---
 
-## 5. How to Add & Submit to Google Search Console
+## 4. How to Buy a Domain in Hostinger & Connect It
 
-1. Go to [Google Search Console](https://search.google.com/search-console) and sign in with your Google account.
-2. Click **Add Property** $\rightarrow$ choose **Domain** (e.g., `yourdomain.com`) and click **Continue**.
-3. Google will give you a **TXT verification record** (e.g. `google-site-verification=...`).
-4. Open **Hostinger hPanel $\rightarrow$ Domains $\rightarrow$ DNS / Nameservers** and add a new DNS record:
-   * Type: `TXT`
-   * Name: `@`
-   * TXT Value: *(paste the `google-site-verification=...` string)*
-5. Wait 5–10 minutes, then return to Google Search Console and click **Verify**.
-6. Once verified:
-   * Use **URL Inspection** at the top $\rightarrow$ enter `https://yourdomain.com/` $\rightarrow$ click **Request Indexing**.
-   * If you add a `sitemap.xml` in `frontend/public/sitemap.xml`, go to **Sitemaps** in the left menu, enter `sitemap.xml`, and click **Submit**.
+Want your own custom website name like `lsinteriors.in` instead of `.vercel.app`? Follow these 3 steps:
+
+### Step 1: Buy the Domain on Hostinger
+1. Open [hostinger.com](https://www.hostinger.com) and sign in.
+2. Click **Domains** $\rightarrow$ **Get a New Domain**.
+3. Type your shop/business name (for example `lsinteriors.in` or `lsinteriors.com`) and click **Search**.
+4. Pick an available name, complete payment, and click the verification link Hostinger sends to your email.
+
+### Step 2: Tell Vercel About Your New Domain
+1. Open your project on [vercel.com](https://vercel.com).
+2. Click **Settings** (top tab) $\rightarrow$ **Domains** (left menu).
+3. Type your domain (e.g. `lsinteriors.in`) and click **Add**.
+4. Vercel will show you two values to copy (`76.76.21.21` and `cname.vercel-dns.com`).
+
+### Step 3: Connect Hostinger to Vercel (DNS)
+1. Go back to **Hostinger** $\rightarrow$ **Domains** $\rightarrow$ click **Manage** next to your domain $\rightarrow$ **DNS / Nameservers**.
+2. Delete any old `A` or `CNAME` records for `@` or `www`, then add these **2 records**:
+   * **Record 1 (Main site):**
+     * **Type:** `A` | **Name:** `@` | **Points to:** `76.76.21.21`
+   * **Record 2 (`www` site):**
+     * **Type:** `CNAME` | **Name:** `www` | **Target:** `cname.vercel-dns.com`
+3. Click **Save**. Wait **10–30 minutes**—your site will open at `https://yourdomain.com` with a free padlock (`HTTPS`).
+4. Add `https://yourdomain.com,https://www.yourdomain.com` to `CORS_ORIGINS` on your Backend so login works on your new domain!
+
+---
+
+## 5. How to Put Your Site on Google (Google Search Console)
+
+This tells Google your website exists so people can find it on Google Search:
+
+1. Open [Google Search Console](https://search.google.com/search-console) and sign in with your Google account.
+2. Click **Add Property** $\rightarrow$ click **Domain** $\rightarrow$ type `yourdomain.com` $\rightarrow$ click **Continue**.
+3. Google shows a **TXT code** (looks like `google-site-verification=xxxxx`). Click **Copy**.
+4. Open **Hostinger $\rightarrow$ Domains $\rightarrow$ Manage $\rightarrow$ DNS / Nameservers** and add 1 record:
+   * **Type:** `TXT` | **Name:** `@` | **TXT Value:** *(paste the Google code)*
+5. Wait 5 minutes, go back to Google Search Console, and click **Verify**.
+6. After it says **Ownership verified**:
+   * Click **URL Inspection** at the top, type `https://yourdomain.com/`, press Enter, and click **Request Indexing**.
+   * Google will now crawl and list your website!
