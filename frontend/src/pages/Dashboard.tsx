@@ -1,7 +1,8 @@
-import { useEffect, useState, useMemo, Fragment } from 'react'
+﻿import { useEffect, useState, useMemo, Fragment } from 'react'
 import type { Language } from '../components/Sidebar'
 import type { Customer, Project } from './Customers'
 import { matchesProjectSerial } from '../utils/projectSerials'
+import { apiUrl, authFetch } from '../utils/api'
 import './Dashboard.css'
 
 interface WindowItem {
@@ -153,7 +154,7 @@ export default function Dashboard({
   const fetchStats = async (isManual = false) => {
     if (isManual) setRefreshing(true)
     try {
-      const res = await fetch('/api/dashboard/stats')
+      const res = await authFetch(apiUrl('/dashboard/stats'))
       if (res.ok) {
         const data = await res.json()
         setStats(data)
@@ -281,7 +282,7 @@ export default function Dashboard({
     })
 
     try {
-      const res = await fetch(`/api/projects/${projectId}/measurements/${windowId}/status`, {
+      const res = await authFetch(apiUrl(`/projects/${projectId}/measurements/${windowId}/status`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus }),
@@ -307,7 +308,7 @@ export default function Dashboard({
   ) => {
     setUpdatingProjectId(projectId)
     try {
-      const res = await fetch(`/api/projects/${projectId}/measurements/mark-all-status`, {
+      const res = await authFetch(apiUrl(`/projects/${projectId}/measurements/mark-all-status`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: targetStatus }),
@@ -339,13 +340,16 @@ export default function Dashboard({
     })
 
     try {
-      const res = await fetch(`/api/projects/${projectId}/status`, {
+      const res = await authFetch(apiUrl(`/projects/${projectId}/status`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       })
       if (res.ok) {
         // Refresh to re-tally overall status counts accurately
+        fetchStats()
+      } else {
+        // Revert optimistic state on failure
         fetchStats()
       }
     } catch (err) {

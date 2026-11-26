@@ -3,6 +3,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_shop
@@ -94,46 +95,54 @@ def create_project(
         )
 
     # Assign a unique project serial number.
-    if project_data.serial_number and project_data.serial_number.strip():
-        chosen_serial = project_data.serial_number.strip().upper()
+    custom_serial = (
+        project_data.serial_number.strip().upper()
+        if project_data.serial_number and project_data.serial_number.strip()
+        else None
+    )
 
+    if custom_serial:
         duplicate_serial = db.scalar(
             select(Project).where(
-                Project.serial_number == chosen_serial
+                Project.serial_number == custom_serial
             )
         )
-
         if duplicate_serial:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    f"Serial number {chosen_serial} "
+                    f"Serial number {custom_serial} "
                     "already exists in database."
                 ),
             )
 
-        serial_val = chosen_serial
-    else:
-        serial_val = generate_unique_project_serial_number(db)
-
-    project = Project(
-        shop_id=shop.id,
-        customer_id=customer.id,
-        serial_number=serial_val,
-        name=cleaned_name,
-        description=project_data.description,
-        status=status_val,
-        input_unit=project_data.input_unit,
-        output_unit=project_data.output_unit,
-        default_tolerance_mm=project_data.default_tolerance_mm,
-        default_apply_tolerance=project_data.default_apply_tolerance,
-    )
-
-    db.add(project)
-    db.commit()
-    db.refresh(project)
-
-    return project
+    max_attempts = 1 if custom_serial else 5
+    for attempt in range(max_attempts):
+        serial_val = custom_serial or generate_unique_project_serial_number(db)
+        project = Project(
+            shop_id=shop.id,
+            customer_id=customer.id,
+            serial_number=serial_val,
+            name=cleaned_name,
+            description=project_data.description,
+            status=status_val,
+            input_unit=project_data.input_unit,
+            output_unit=project_data.output_unit,
+            default_tolerance_mm=project_data.default_tolerance_mm,
+            default_apply_tolerance=project_data.default_apply_tolerance,
+        )
+        db.add(project)
+        try:
+            db.commit()
+            db.refresh(project)
+            return project
+        except IntegrityError as exc:
+            db.rollback()
+            if custom_serial or attempt == max_attempts - 1:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Project serial number conflicted with an existing record.",
+                ) from exc
 
 
 @router.get("/", response_model=list[ProjectResponse])
@@ -158,20 +167,7 @@ def get_projects(
         )
 
     statement = query.order_by(Project.created_at.desc())
-    projects = list(db.scalars(statement).all())
-    needs_commit = False
-
-    for project in projects:
-        if not project.serial_number:
-            project.serial_number = (
-                generate_unique_project_serial_number(db)
-            )
-            needs_commit = True
-
-    if needs_commit:
-        db.commit()
-
-    return projects
+    return list(db.scalars(statement).all())
 
 
 @router.get(

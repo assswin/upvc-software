@@ -1,7 +1,8 @@
-
+﻿
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Language } from '../components/Sidebar'
+import { apiUrl, authFetch } from '../utils/api'
 import './Customers.css'
 
 export type Customer = {
@@ -80,8 +81,8 @@ function Customers({
 
   async function loadData() {
     try {
-      const customerResponse = await fetch(
-        '/api/customers/?include_inactive=true',
+      const customerResponse = await authFetch(
+        apiUrl('/customers/?include_inactive=true'),
       )
 
       if (!customerResponse.ok) {
@@ -280,7 +281,7 @@ function Customers({
     }
 
     try {
-      const response = await fetch('/api/customers/', {
+      const response = await authFetch(apiUrl('/customers/'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -326,8 +327,8 @@ function Customers({
     }
 
     try {
-      const response = await fetch(
-        `/api/customers/${editingCustomer.id}`,
+      const response = await authFetch(
+        apiUrl(`/customers/${editingCustomer.id}`),
         {
           method: 'PUT',
           headers: {
@@ -349,8 +350,8 @@ function Customers({
         await response.json()
 
       await loadData()
-      onSelectCustomer(updatedCustomer)
       closeEditForm()
+      onNewOrder(updatedCustomer)
     } catch (updateError) {
       setError(
         updateError instanceof Error
@@ -375,8 +376,8 @@ function Customers({
     setError('')
 
     try {
-      const response = await fetch(
-        `/api/customers/${customer.id}`,
+      const response = await authFetch(
+        apiUrl(`/customers/${customer.id}`),
         { method: 'DELETE' },
       )
 
@@ -423,8 +424,8 @@ function Customers({
 
     try {
       for (const customer of targets) {
-        const response = await fetch(
-          `/api/customers/${customer.id}`,
+        const response = await authFetch(
+          apiUrl(`/customers/${customer.id}`),
           { method: 'DELETE' },
         )
 
@@ -471,8 +472,8 @@ function Customers({
     setError('')
 
     try {
-      const response = await fetch(
-        `/api/customers/${customer.id}/restore`,
+      const response = await authFetch(
+        apiUrl(`/customers/${customer.id}/restore`),
         { method: 'PATCH' },
       )
 
@@ -515,8 +516,8 @@ function Customers({
 
     try {
       for (const customer of targets) {
-        const response = await fetch(
-          `/api/customers/${customer.id}/restore`,
+        const response = await authFetch(
+          apiUrl(`/customers/${customer.id}/restore`),
           { method: 'PATCH' },
         )
 
@@ -556,8 +557,8 @@ function Customers({
     setError('')
 
     try {
-      const response = await fetch(
-        `/api/customers/${customer.id}/permanent`,
+      const response = await authFetch(
+        apiUrl(`/customers/${customer.id}/permanent`),
         { method: 'DELETE' },
       )
 
@@ -605,8 +606,8 @@ function Customers({
 
     try {
       for (const customer of targets) {
-        const response = await fetch(
-          `/api/customers/${customer.id}/permanent`,
+        const response = await authFetch(
+          apiUrl(`/customers/${customer.id}/permanent`),
           { method: 'DELETE' },
         )
 
@@ -865,6 +866,14 @@ function Customers({
                                   disabled={saving}
                                 >
                                   {t('Edit', 'Edit')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="customer-secondary-button"
+                                  onClick={() => onNewOrder(customer)}
+                                  disabled={saving}
+                                >
+                                  {t('Update Order / Measurement', 'ஆர்டர் / அளவீடு புதுப்பி')}
                                 </button>
                                 <button
                                   type="button"

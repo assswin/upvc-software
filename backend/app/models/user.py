@@ -49,6 +49,11 @@ class User(Base):
         nullable=False,
     )
 
+    phone: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
     password_hash: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
@@ -56,12 +61,19 @@ class User(Base):
 
     role: Mapped[str] = mapped_column(
         String(30),
+        default="staff",
         nullable=False,
     )
 
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
+        nullable=False,
+    )
+
+    is_logged_in: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
         nullable=False,
     )
 

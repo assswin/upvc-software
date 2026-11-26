@@ -1,33 +1,113 @@
+import { useEffect, useState } from 'react'
 
-import { useState } from 'react'
-
-import Customers, {
-  type Customer,
-} from './pages/Customers'
-
-import Sidebar, {
-  type Language,
-  type PageKey,
-} from './components/Sidebar'
-
+import Customers, { type Customer } from './pages/Customers'
+import Sidebar, { type Language, type PageKey } from './components/Sidebar'
 import Measurements from './pages/Measurements'
 import Settings from './pages/Settings'
 import Dashboard from './pages/Dashboard'
 import Drawings from './pages/Drawings'
+import AuthPortal from './pages/AuthPortal'
+import {
+  apiRequest,
+  clearAccessToken,
+  getAccessToken,
+  type UserProfile,
+} from './utils/api'
 
 import './App.css'
 
 function App() {
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
+  const [authNotice, setAuthNotice] = useState<string>('')
+  const [authChecking, setAuthChecking] = useState<boolean>(() => Boolean(getAccessToken()))
   const [language, setLanguage] = useState<Language>('en')
+  const [activePage, setActivePage] = useState<PageKey>('dashboard')
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
 
-  const [activePage, setActivePage] =
-    useState<PageKey>('dashboard')
+  useEffect(() => {
+    const token = getAccessToken()
+    if (!token) {
+      return
+    }
+    let active = true
+    apiRequest<UserProfile>('/auth/me')
+      .then((profile) => {
+        if (active) setUserProfile(profile)
+      })
+      .catch(() => {
+        clearAccessToken()
+        if (active) setUserProfile(null)
+      })
+      .finally(() => {
+        if (active) setAuthChecking(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
-  const [selectedCustomer, setSelectedCustomer] =
-    useState<Customer | null>(null)
+  useEffect(() => {
+    const handleExpired = (event: Event) => {
+      const customEvent = event as CustomEvent<{ message?: string }>
+      setUserProfile(null)
+      setSelectedCustomer(null)
+      setSelectedProjectId(null)
+      setAuthNotice(customEvent.detail?.message || '')
+    }
+    window.addEventListener('ls-auth-expired', handleExpired)
+    return () => window.removeEventListener('ls-auth-expired', handleExpired)
+  }, [])
 
-  const [selectedProjectId, setSelectedProjectId] =
-    useState<string | null>(null)
+  useEffect(() => {
+    if (!userProfile) return
+    const verifySession = () => {
+      if (!getAccessToken()) return
+      void apiRequest<UserProfile>('/auth/me').catch(() => {
+        // 401/403 is handled by authFetch -> ls-auth-expired
+      })
+    }
+    const intervalId = window.setInterval(verifySession, 10000)
+    window.addEventListener('focus', verifySession)
+    return () => {
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', verifySession)
+    }
+  }, [userProfile])
+
+  async function handleLogout() {
+    try {
+      await apiRequest('/auth/logout', { method: 'POST' })
+    } catch {
+      // Ignore network errors on logout
+    } finally {
+      clearAccessToken()
+      setUserProfile(null)
+      setSelectedCustomer(null)
+      setSelectedProjectId(null)
+      setActivePage('dashboard')
+    }
+  }
+
+  if (authChecking) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        Loading LS Interiors...
+      </div>
+    )
+  }
+
+  if (!userProfile) {
+    return (
+      <AuthPortal
+        initialError={authNotice}
+        onAuthSuccess={(profile) => {
+          setAuthNotice('')
+          setUserProfile(profile)
+        }}
+      />
+    )
+  }
 
   const pageTitles: Record<PageKey, { en: string; ta: string }> = {
     dashboard: { en: 'Dashboard', ta: 'முகப்பு' },
@@ -55,21 +135,18 @@ function App() {
         onLanguageChange={setLanguage}
         activePage={activePage}
         onNavigate={setActivePage}
+        userProfile={userProfile}
+        onLogout={() => void handleLogout()}
       />
 
       <main className="main-content">
         <header className="dashboard-header">
           <div>
-            <h1>
-              {language === 'en'
-                ? currentTitle.en
-                : currentTitle.ta}
-            </h1>
-
+            <h1>{language === 'en' ? currentTitle.en : currentTitle.ta}</h1>
             <p>
               {language === 'en'
-                ? 'Welcome to LS INTERIORS'
-                : 'LS INTERIORS-க்கு வரவேற்கிறோம்'}
+                ? `Welcome to LS INTERIORS, ${userProfile.full_name}`
+                : `LS INTERIORS-க்கு வரவேற்கிறோம், ${userProfile.full_name}`}
             </p>
           </div>
         </header>
@@ -113,11 +190,13 @@ function App() {
             }}
           />
         ) : activePage === 'settings' ? (
-          <Settings language={language} />
+          <Settings
+            language={language}
+            userProfile={userProfile}
+            onLogout={() => void handleLogout()}
+          />
         ) : (
-          <section className="dashboard-placeholder">
-            {currentTitle.en}
-          </section>
+          <section className="dashboard-placeholder">{currentTitle.en}</section>
         )}
       </main>
     </div>

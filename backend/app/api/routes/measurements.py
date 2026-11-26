@@ -40,7 +40,14 @@ def convert_to_mm(
     if value is None:
         return None
 
-    return value * UNIT_FACTORS[unit]
+    factor = UNIT_FACTORS.get(unit)
+    if factor is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported measurement unit: {unit}",
+        )
+
+    return value * factor
 
 
 def get_active_project(
@@ -509,7 +516,7 @@ def mark_all_measurements_status(
     for measurement in all_measurements:
         measurement.status = payload.status
 
-    if payload.status == "finished":
+    if payload.status.lower() in ("finished", "completed"):
         project.status = "completed"
     elif project.status == "completed":
         project.status = "active"

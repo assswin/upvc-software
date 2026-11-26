@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
+import { apiUrl, authFetch } from '../utils/api'
 import {
   Download,
   Eye,
@@ -238,7 +239,7 @@ export default function Drawings({
       setCustomerError('')
 
       try {
-        const response = await fetch('/api/customers/?include_inactive=true')
+        const response = await authFetch(apiUrl('/customers/?include_inactive=true'))
         const loadedCustomers = await readJson<Customer[]>(response)
 
         if (!Array.isArray(loadedCustomers)) {
@@ -250,8 +251,8 @@ export default function Drawings({
         )
 
         if (initialProjectId && !initialProjectResolvedRef.current) {
-          const projectResponse = await fetch(
-            `/api/projects/${encodeURIComponent(initialProjectId)}`,
+          const projectResponse = await authFetch(
+            apiUrl(`/projects/${encodeURIComponent(initialProjectId)}`),
           )
           const project = await readJson<BackendProject>(projectResponse)
           nextCustomer = loadedCustomers.find(
@@ -300,8 +301,8 @@ export default function Drawings({
       setViewIndex(null)
 
       try {
-        const projectsResponse = await fetch(
-          `/api/projects/?customer_id=${encodeURIComponent(selectedCustomer.id)}`,
+        const projectsResponse = await authFetch(
+          apiUrl(`/projects/?customer_id=${encodeURIComponent(selectedCustomer.id)}`),
         )
         const customerProjects = await readJson<BackendProject[]>(
           projectsResponse,
@@ -313,8 +314,8 @@ export default function Drawings({
 
         const projectMeasurements = await Promise.all(
           customerProjects.map(async (project) => {
-            const response = await fetch(
-              `/api/projects/${encodeURIComponent(project.id)}/measurements/`,
+            const response = await authFetch(
+              apiUrl(`/projects/${encodeURIComponent(project.id)}/measurements/`),
             )
             const measurements = await readJson<BackendMeasurement[]>(response)
 

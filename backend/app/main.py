@@ -1,8 +1,13 @@
+import os
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
-from app.api.routes import customers, projects, measurements, dashboard
+from app.api.routes import admin, auth, customers, dashboard, measurements, projects
+from app.core.security import limiter
 from app.db.init_db import init_db
 
 
@@ -19,14 +24,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+raw_origins = os.getenv("CORS_ORIGINS")
+allowed_origins = (
+    [o.strip() for o in raw_origins.split(",") if o.strip()]
+    if raw_origins
+    else ["http://localhost:5173", "http://127.0.0.1:5173"]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.include_router(auth.router)
+app.include_router(admin.router)
 app.include_router(customers.router)
 app.include_router(projects.router)
 app.include_router(measurements.router)

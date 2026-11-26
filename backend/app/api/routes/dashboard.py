@@ -26,22 +26,32 @@ def get_dashboard_stats(
     db: Session = Depends(get_db),
     shop: Shop = Depends(get_current_shop),
 ) -> dict[str, Any]:
-    # 1. Fetch active projects with customer details
+    # 1. Fetch active projects with active customer details
     projects_stmt = (
         select(Project, Customer)
         .join(Customer, Customer.id == Project.customer_id)
-        .where(Project.shop_id == shop.id, Project.status != "inactive")
+        .where(
+            Project.shop_id == shop.id,
+            Project.status != "inactive",
+            Customer.is_active.is_(True),
+        )
         .order_by(Project.created_at.desc())
     )
     project_customer_pairs = db.execute(projects_stmt).all()
 
-    # 2. Fetch measurements for shop
-    measurements_stmt = (
-        select(Measurement)
-        .where(Measurement.shop_id == shop.id)
-        .order_by(Measurement.row_order.asc())
-    )
-    all_measurements = db.scalars(measurements_stmt).all()
+    # 2. Fetch measurements only for active projects in this shop
+    active_project_ids = [proj.id for proj, _ in project_customer_pairs]
+    all_measurements: list[Measurement] = []
+    if active_project_ids:
+        measurements_stmt = (
+            select(Measurement)
+            .where(
+                Measurement.shop_id == shop.id,
+                Measurement.project_id.in_(active_project_ids),
+            )
+            .order_by(Measurement.row_order.asc())
+        )
+        all_measurements = list(db.scalars(measurements_stmt).all())
 
     measurements_by_proj: dict[uuid.UUID, list[Measurement]] = collections.defaultdict(list)
     for m in all_measurements:
@@ -77,15 +87,7 @@ def get_dashboard_stats(
         pending_w = total_w - finished_w
         not_finished_w = pending_w
 
-        # Automatically complete/finish project if all windows are finished
-        if total_w > 0 and finished_w == total_w and proj.status != "completed":
-            proj.status = "completed"
-            db.commit()
-        elif total_w > 0 and finished_w < total_w and proj.status == "completed":
-            proj.status = "active"
-            db.commit()
-
-        st = proj.status.lower()
+        st = (proj.status or "active").lower()
         if st in status_counts:
             status_counts[st] += 1
         elif st in ("in_progress", "active"):

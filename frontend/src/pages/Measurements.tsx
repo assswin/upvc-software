@@ -1,4 +1,4 @@
-
+﻿
 import { useEffect, useState, useRef, useMemo } from 'react'
 import type { Customer } from './Customers'
 import type { Language } from '../components/Sidebar'
@@ -8,6 +8,7 @@ import { convertMeasurementsToCalculationResults } from '../utils/cadBridge'
 import { getModelColor } from '../utils/modelColors'
 import { generateProjectSerialNumber } from '../utils/projectSerials'
 import { resolveWindowLabels } from '../utils/windowIdentity'
+import { apiUrl, authFetch } from '../utils/api'
 import {
   calculateSlidingWindow,
   WINDOW_MODELS,
@@ -376,7 +377,7 @@ function Measurements({
 
     const loadProject = async () => {
       try {
-        const response = await fetch(`/api/projects/${initialProjectId}`)
+        const response = await authFetch(apiUrl(`/projects/${initialProjectId}`))
         if (!response.ok) return
 
         const project: BackendProject = await response.json()
@@ -401,8 +402,8 @@ function Measurements({
 
         if (project.customer_id && !selectedCustomer?.id) {
           try {
-            const customerResponse = await fetch(
-              `/api/customers/${project.customer_id}`
+            const customerResponse = await authFetch(
+              apiUrl(`/customers/${project.customer_id}`)
             )
 
             if (customerResponse.ok && !cancelled) {
@@ -416,8 +417,8 @@ function Measurements({
           }
         }
 
-        const measurementsResponse = await fetch(
-          `/api/projects/${initialProjectId}/measurements/`
+        const measurementsResponse = await authFetch(
+          apiUrl(`/projects/${initialProjectId}/measurements/`)
         )
 
         if (measurementsResponse.ok && !cancelled) {
@@ -482,7 +483,7 @@ function Measurements({
 
     const syncBackendProjects = async () => {
       try {
-        const response = await fetch('/api/projects/')
+        const response = await authFetch(apiUrl('/projects/'))
         if (!response.ok) return
 
         const backendProjects: BackendProject[] = await response.json()
@@ -685,7 +686,7 @@ function Measurements({
     if (!name) return null
 
     try {
-      const listResponse = await fetch('/api/customers/')
+      const listResponse = await authFetch(apiUrl('/customers/'))
 
       if (listResponse.ok) {
         const customers: Customer[] = await listResponse.json()
@@ -697,7 +698,7 @@ function Measurements({
         if (match) return match.id
       }
 
-      const createResponse = await fetch('/api/customers/', {
+      const createResponse = await authFetch(apiUrl('/customers/'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -758,8 +759,8 @@ function Measurements({
         orderData.projectName || pendingProjectNameRef.current || ''
 
       if (!internalProjectName && isUuid && projectId) {
-        const existingProjectResponse = await fetch(
-          `/api/projects/${projectId}`
+        const existingProjectResponse = await authFetch(
+          apiUrl(`/projects/${projectId}`)
         )
         if (!existingProjectResponse.ok) {
           window.alert('Unable to load the existing measurement order.')
@@ -789,7 +790,7 @@ function Measurements({
       }
 
       if (isUuid && projectId) {
-        const updateResponse = await fetch(`/api/projects/${projectId}`, {
+        const updateResponse = await authFetch(apiUrl(`/projects/${projectId}`), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(projectPayload),
@@ -807,7 +808,7 @@ function Measurements({
       }
 
       if (!projectId || !isUuid) {
-        const createResponse = await fetch('/api/projects/', {
+        const createResponse = await authFetch(apiUrl('/projects/'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(projectPayload),
@@ -818,8 +819,8 @@ function Measurements({
           console.error('Failed to create project:', errorMessage)
 
           if (createResponse.status === 400) {
-            const existingProjectsResponse = await fetch(
-              `/api/projects/?customer_id=${encodeURIComponent(customerId)}`
+            const existingProjectsResponse = await authFetch(
+              apiUrl(`/projects/?customer_id=${encodeURIComponent(customerId)}`)
             )
             if (existingProjectsResponse.ok) {
               const existingProjects: BackendProject[] =
@@ -879,8 +880,14 @@ function Measurements({
           return {
             id,
             row_order: index + 1,
-            height: row.height ? parseFloat(row.height) : null,
-            width: row.width ? parseFloat(row.width) : null,
+            height:
+              row.height && Number.isFinite(parseFloat(row.height)) && parseFloat(row.height) > 0
+                ? parseFloat(row.height)
+                : null,
+            width:
+              row.width && Number.isFinite(parseFloat(row.width)) && parseFloat(row.width) > 0
+                ? parseFloat(row.width)
+                : null,
             input_unit: orderData.fromUnit,
             model_id: row.modelId || null,
             variant_letter: row.variantLetter || '',
@@ -896,8 +903,8 @@ function Measurements({
         delete_ids: deleteIds,
       }
 
-      const batchResponse = await fetch(
-        `/api/projects/${projectId}/measurements/batch`,
+      const batchResponse = await authFetch(
+        apiUrl(`/projects/${projectId}/measurements/batch`),
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1905,8 +1912,8 @@ function Measurements({
 
                         if (row.backendId && currentOrderId) {
                           try {
-                            const response = await fetch(
-                              `/api/projects/${currentOrderId}/measurements/${row.backendId}/status`,
+                            const response = await authFetch(
+                              apiUrl(`/projects/${currentOrderId}/measurements/${row.backendId}/status`),
                               {
                                 method: 'PATCH',
                                 headers: {
