@@ -11,6 +11,10 @@ from app.api.dependencies import bearer_scheme
 from app.core.security import ADMIN_PASSCODE, ALGORITHM, SECRET_KEY, create_access_token
 from app.db.dependencies import get_db
 from app.models.auth_tokens import LoginOTP, PasswordResetOTP, PasswordResetToken
+from app.models.customer import Customer
+from app.models.measurement import Measurement
+from app.models.project import Project
+from app.models.shop import Shop
 from app.models.user import User
 from app.schemas.auth import AdminAuthRequest, UserResponse
 
@@ -77,9 +81,23 @@ def admin_delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
+    shop_id = user.shop_id
+    user_email = user.email
+
     db.execute(delete(LoginOTP).where(LoginOTP.user_id == user.id))
     db.execute(delete(PasswordResetOTP).where(PasswordResetOTP.user_id == user.id))
     db.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user.id))
     db.delete(user)
+    db.flush()
+
+    other_user_in_shop = db.scalar(
+        select(User.id).where(User.shop_id == shop_id).limit(1)
+    )
+    if other_user_in_shop is None:
+        db.execute(delete(Measurement).where(Measurement.shop_id == shop_id))
+        db.execute(delete(Project).where(Project.shop_id == shop_id))
+        db.execute(delete(Customer).where(Customer.shop_id == shop_id))
+        db.execute(delete(Shop).where(Shop.id == shop_id))
+
     db.commit()
-    return {"message": f"User {user.email} permanently deleted."}
+    return {"message": f"User {user_email} and all their shop/customer data permanently deleted."}
