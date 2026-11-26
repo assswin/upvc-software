@@ -804,7 +804,7 @@ function Customers({
             <table className="customer-table">
               <thead>
                 <tr>
-                  <th>{t('Customer ID', 'வாடிக்கையாளர் ID')}</th>
+                  <th>{t('Customer Serial', 'வாடிக்கையாளர் வரிசை எண்')}</th>
                   <th className="customer-name-header">
                     <input
                       type="checkbox"
@@ -831,7 +831,7 @@ function Customers({
                     >
                       <td>
                         <span className="customer-id">
-                          {customer.id.slice(0, 8).toUpperCase()}
+                          {customer.serial_number || customer.id.slice(0, 8).toUpperCase()}
                         </span>
                       </td>
                       <td>
@@ -953,8 +953,8 @@ function Customers({
             </div>
 
             <div>
-              <span>{t('Customer ID', 'à®µà®¾à®Ÿà®¿à®•à¯à®•à¯ˆà®¯à®¾à®³à®°à¯ ID')}</span>
-              <strong>{selectedCustomer.id}</strong>
+              <span>{t('Customer Serial', 'வாடிக்கையாளர் வரிசை எண்')}</span>
+              <strong>{selectedCustomer.serial_number || selectedCustomer.id}</strong>
             </div>
           </div>
 
@@ -1022,6 +1022,7 @@ function Customers({
                 <input
                   maxLength={50}
                   value={form.serialNumber}
+                  placeholder="e.g. CUST-101 (optional)"
                   onChange={(event) =>
                     setForm({
                       ...form,
@@ -1138,6 +1139,7 @@ function Customers({
                 <input
                   maxLength={50}
                   value={form.serialNumber}
+                  placeholder="e.g. CUST-101 (optional)"
                   onChange={(event) =>
                     setForm({
                       ...form,

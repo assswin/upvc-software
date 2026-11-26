@@ -49,7 +49,7 @@ Make sure these are installed on your computer:
 * **Node.js 18+ & npm** (`node -v` and `npm -v`)
 
 ### Step 1: Configure `backend/.env`
-Create or edit `backend/.env` (use encrypted `GMAIL_ADDRESS_ENC` and `GMAIL_APP_PASSWORD_ENC` so plain-text credentials are never stored):
+Copy `backend/.env.example` to `backend/.env` and fill in your values (use encrypted `GMAIL_ADDRESS_ENC` and `GMAIL_APP_PASSWORD_ENC` so plain-text credentials are never stored):
 ```env
 SECRET_KEY=your-long-random-secret-key
 ADMIN_PASSCODE=your-admin-passcode
