@@ -24,13 +24,15 @@ router = APIRouter(
 )
 
 
-def generate_unique_project_serial_number(db: Session) -> str:
-    """Generate sequential unique project serial numbers
+def generate_unique_project_serial_number(db: Session, shop: Shop) -> str:
+    """Generate sequential unique project serial numbers per shop
     (e.g. PROJ-1, PROJ-2).
     """
     import re
 
-    serials = db.scalars(select(Project.serial_number)).all()
+    serials = db.scalars(
+        select(Project.serial_number).where(Project.shop_id == shop.id)
+    ).all()
     existing_nums = set()
 
     for serial in serials:
@@ -104,7 +106,8 @@ def create_project(
     if custom_serial:
         duplicate_serial = db.scalar(
             select(Project).where(
-                Project.serial_number == custom_serial
+                Project.shop_id == shop.id,
+                Project.serial_number == custom_serial,
             )
         )
         if duplicate_serial:
@@ -112,13 +115,13 @@ def create_project(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
                     f"Serial number {custom_serial} "
-                    "already exists in database."
+                    "already exists in your shop."
                 ),
             )
 
     max_attempts = 1 if custom_serial else 5
     for attempt in range(max_attempts):
-        serial_val = custom_serial or generate_unique_project_serial_number(db)
+        serial_val = custom_serial or generate_unique_project_serial_number(db, shop)
         project = Project(
             shop_id=shop.id,
             customer_id=customer.id,

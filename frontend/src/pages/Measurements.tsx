@@ -371,17 +371,31 @@ function Measurements({
   const displayedCustomerPhone = selectedCustomer?.phone ?? customerPhone
 
   useEffect(() => {
-    if (!initialProjectId) return
+    if (!initialProjectId && !selectedCustomer?.id) return
 
     let cancelled = false
 
     const loadProject = async () => {
       try {
-        const response = await authFetch(apiUrl(`/projects/${initialProjectId}`))
-        if (!response.ok) return
+        let project: BackendProject | null = null
 
-        const project: BackendProject = await response.json()
-        if (cancelled) return
+        if (initialProjectId) {
+          const response = await authFetch(apiUrl(`/projects/${initialProjectId}`))
+          if (!response.ok) return
+          project = await response.json()
+        } else if (selectedCustomer?.id) {
+          const response = await authFetch(
+            apiUrl(`/projects/?customer_id=${selectedCustomer.id}`)
+          )
+          if (!response.ok) return
+          const customerProjects: BackendProject[] = await response.json()
+          if (!Array.isArray(customerProjects) || customerProjects.length === 0) {
+            return
+          }
+          project = customerProjects[0]
+        }
+
+        if (cancelled || !project) return
 
         setCurrentOrderId(project.id)
         setProjectName(project.name)
@@ -418,7 +432,7 @@ function Measurements({
         }
 
         const measurementsResponse = await authFetch(
-          apiUrl(`/projects/${initialProjectId}/measurements/`)
+          apiUrl(`/projects/${project.id}/measurements/`)
         )
 
         if (measurementsResponse.ok && !cancelled) {

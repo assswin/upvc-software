@@ -294,8 +294,10 @@ function Customers({
         throw new Error(result?.detail || 'Unable to add customer.')
       }
 
+      const createdCustomer: Customer = await response.json()
       await loadData()
       closeAddForm()
+      onNewOrder(createdCustomer)
     } catch (createError) {
       setError(
         createError instanceof Error

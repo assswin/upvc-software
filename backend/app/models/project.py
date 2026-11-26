@@ -29,8 +29,9 @@ class Project(Base):
             name="uq_projects_id_shop_id",
         ),
         UniqueConstraint(
+            "shop_id",
             "serial_number",
-            name="uq_projects_serial_number",
+            name="uq_projects_shop_serial_number",
         ),
         ForeignKeyConstraint(
             ["customer_id", "shop_id"],
@@ -48,7 +49,6 @@ class Project(Base):
     serial_number: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
-        unique=True,
         index=True,
     )
 
