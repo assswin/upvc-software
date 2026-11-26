@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import hmac
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -51,3 +54,55 @@ def create_password_reset_token(email: str) -> str:
         "exp": expire,
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _derive_cipher_keys(key_material: str) -> tuple[bytes, bytes]:
+    raw = key_material.encode("utf-8")
+    enc_key = hashlib.sha256(b"ls-enc:" + raw).digest()
+    mac_key = hashlib.sha256(b"ls-mac:" + raw).digest()
+    return enc_key, mac_key
+
+
+def encrypt_secret(plaintext: str, key_material: str | None = None) -> str:
+    secret = key_material or os.getenv("MAIL_ENC_KEY") or os.getenv("SECRET_KEY") or SECRET_KEY
+    enc_key, mac_key = _derive_cipher_keys(secret)
+    nonce = secrets.token_bytes(16)
+    data = plaintext.encode("utf-8")
+
+    keystream = bytearray()
+    counter = 0
+    while len(keystream) < len(data):
+        block = hashlib.sha256(enc_key + nonce + counter.to_bytes(4, "big")).digest()
+        keystream.extend(block)
+        counter += 1
+
+    ciphertext = bytes(a ^ b for a, b in zip(data, keystream[: len(data)]))
+    tag = hmac.new(mac_key, nonce + ciphertext, hashlib.sha256).digest()
+    return "enc1:" + base64.urlsafe_b64encode(nonce + ciphertext + tag).decode("ascii")
+
+
+def decrypt_secret(token: str, key_material: str | None = None) -> str:
+    if not token or not token.startswith("enc1:"):
+        return token
+    secret = key_material or os.getenv("MAIL_ENC_KEY") or os.getenv("SECRET_KEY") or SECRET_KEY
+    enc_key, mac_key = _derive_cipher_keys(secret)
+    raw = base64.urlsafe_b64decode(token[5:].encode("ascii"))
+    if len(raw) < 48:
+        raise ValueError("Invalid encrypted secret format.")
+
+    nonce = raw[:16]
+    tag = raw[-32:]
+    ciphertext = raw[16:-32]
+    expected_tag = hmac.new(mac_key, nonce + ciphertext, hashlib.sha256).digest()
+    if not hmac.compare_digest(tag, expected_tag):
+        raise ValueError("Encrypted secret authentication failed.")
+
+    keystream = bytearray()
+    counter = 0
+    while len(keystream) < len(ciphertext):
+        block = hashlib.sha256(enc_key + nonce + counter.to_bytes(4, "big")).digest()
+        keystream.extend(block)
+        counter += 1
+
+    plaintext = bytes(a ^ b for a, b in zip(ciphertext, keystream[: len(ciphertext)]))
+    return plaintext.decode("utf-8")

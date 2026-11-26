@@ -7,6 +7,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.core.security import decrypt_secret
+
 logger = logging.getLogger(__name__)
 ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 
@@ -30,8 +32,20 @@ def send_otp_email(recipient: str, otp: str, purpose: str) -> str:
     # Reload backend/.env on each call so email changes apply automatically without code edits
     load_dotenv(ENV_PATH, override=True)
 
-    gmail_address = (os.getenv("GMAIL_ADDRESS") or "").strip()
-    gmail_app_password = "".join((os.getenv("GMAIL_APP_PASSWORD") or "").split())
+    enc_address = (os.getenv("GMAIL_ADDRESS_ENC") or "").strip()
+    enc_password = (os.getenv("GMAIL_APP_PASSWORD_ENC") or "").strip()
+
+    gmail_address = (
+        decrypt_secret(enc_address).strip()
+        if enc_address
+        else (os.getenv("GMAIL_ADDRESS") or "").strip()
+    )
+    raw_password = (
+        decrypt_secret(enc_password)
+        if enc_password
+        else (os.getenv("GMAIL_APP_PASSWORD") or "")
+    )
+    gmail_app_password = "".join(raw_password.split())
     receiver_override = (os.getenv("OTP_RECEIVER_EMAIL") or "").strip()
     target_recipient = receiver_override or recipient
 

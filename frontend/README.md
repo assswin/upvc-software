@@ -49,15 +49,25 @@ Make sure these are installed on your computer:
 * **Node.js 18+ & npm** (`node -v` and `npm -v`)
 
 ### Step 1: Configure `backend/.env`
-Create or edit `backend/.env`:
+Create or edit `backend/.env` (use encrypted `GMAIL_ADDRESS_ENC` and `GMAIL_APP_PASSWORD_ENC` so plain-text credentials are never stored):
 ```env
 SECRET_KEY=your-long-random-secret-key
 ADMIN_PASSCODE=735195
-GMAIL_ADDRESS=your_email@gmail.com
-GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
+GMAIL_ADDRESS_ENC=enc1:...
+GMAIL_APP_PASSWORD_ENC=enc1:...
 OTP_RECEIVER_EMAIL=
 ```
 > **Note:** Leave `OTP_RECEIVER_EMAIL=` blank to send OTPs to each user's own email, or set an email address to route all OTPs to one inbox.
+
+#### How to Encrypt a New Gmail / App Password in the Future
+If you ever change your Gmail address or generate a new 16-letter Google App Password:
+1. Run this command inside `backend/`:
+   ```powershell
+   python -c "from app.core.security import encrypt_secret; print('GMAIL_ADDRESS_ENC=' + encrypt_secret('new@gmail.com')); print('GMAIL_APP_PASSWORD_ENC=' + encrypt_secret('new 16 letter pass'))"
+   ```
+2. Copy the two printed `enc1:...` lines into `backend/.env` (replacing the old `GMAIL_ADDRESS_ENC` and `GMAIL_APP_PASSWORD_ENC` values).
+3. No code changes or server restart are needed—`email_service.py` automatically reloads `backend/.env` and decrypts them in memory on the next OTP request.
+4. *(Security tip)* If you suspect your old App Password was exposed, revoke it in **Google Account $\rightarrow$ Security $\rightarrow$ App Passwords**.
 
 ### Step 2: Start the Backend (Terminal 1)
 ```powershell
