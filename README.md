@@ -25,7 +25,7 @@ Built with **React + TypeScript + Vite** (Frontend) and **FastAPI + SQLAlchemy**
 * **Protected API & Shop Isolation:** All customer, project, measurement, and dashboard routes require a valid JWT `Bearer` token and are scoped to the user's shop.
 
 ### Admin Portal
-* Accessible from the Sign In screen via **🔒 Admin Portal** (protected by `ADMIN_PASSCODE`, default `735195`).
+* Accessible from the Sign In screen via **🔒 Admin Portal** (protected by `ADMIN_PASSCODE` configured in `backend/.env`).
 * Admins can view all registered users, **Block / Unblock** accounts, or **Delete** users.
 
 ### Automatic `.env` Email Updates
@@ -52,7 +52,7 @@ Make sure these are installed on your computer:
 Create or edit `backend/.env` (use encrypted `GMAIL_ADDRESS_ENC` and `GMAIL_APP_PASSWORD_ENC` so plain-text credentials are never stored):
 ```env
 SECRET_KEY=your-long-random-secret-key
-ADMIN_PASSCODE=735195
+ADMIN_PASSCODE=your-admin-passcode
 GMAIL_ADDRESS_ENC=enc1:...
 GMAIL_APP_PASSWORD_ENC=enc1:...
 OTP_RECEIVER_EMAIL=
