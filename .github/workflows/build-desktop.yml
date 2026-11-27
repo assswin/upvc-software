@@ -24,10 +24,12 @@ jobs:
           node-version: 20
 
       - name: Install desktop dependencies
-        run: npm --prefix desktop install
+        working-directory: desktop
+        run: npm install
 
       - name: Build Windows installer (.exe)
-        run: npm --prefix desktop run build:win
+        working-directory: desktop
+        run: npm run build:win
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
