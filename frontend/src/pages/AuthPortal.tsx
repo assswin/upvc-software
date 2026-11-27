@@ -531,6 +531,7 @@ export default function AuthPortal({ onAuthSuccess, initialError = '' }: AuthPor
                   <tr>
                     <th>Name</th>
                     <th>Email</th>
+                    <th>Phone</th>
                     <th>Role</th>
                     <th>Status</th>
                     <th>Actions</th>
@@ -539,7 +540,7 @@ export default function AuthPortal({ onAuthSuccess, initialError = '' }: AuthPor
                 <tbody>
                   {adminUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={5} style={{ textAlign: 'center' }}>
+                      <td colSpan={6} style={{ textAlign: 'center' }}>
                         No registered users yet.
                       </td>
                     </tr>
@@ -548,6 +549,7 @@ export default function AuthPortal({ onAuthSuccess, initialError = '' }: AuthPor
                       <tr key={u.id}>
                         <td>{u.full_name}</td>
                         <td>{u.email}</td>
+                        <td>{u.phone || '—'}</td>
                         <td>{u.role}</td>
                         <td>{u.is_active ? 'Active' : 'Blocked'}</td>
                         <td className="admin-row-actions">
