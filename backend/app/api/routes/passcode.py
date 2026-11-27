@@ -252,8 +252,9 @@ def get_active_passcode_session(
             detail="Session timed out.",
         )
 
-    ps.last_seen_at = now
-    db.commit()
+    if last_seen is None or (now - last_seen).total_seconds() >= 25:
+        ps.last_seen_at = now
+        db.commit()
     return ps
 
 

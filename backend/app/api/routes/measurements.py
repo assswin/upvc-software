@@ -290,9 +290,6 @@ def batch_create_measurements(
             detail="Measurement synchronization conflicted with existing data.",
         ) from exc
 
-    for measurement in synchronized_measurements:
-        db.refresh(measurement)
-
     return sorted(
         synchronized_measurements,
         key=lambda measurement: measurement.row_order,

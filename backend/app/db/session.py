@@ -35,7 +35,7 @@ connect_args = {"check_same_thread": False} if is_sqlite else {}
 # Create the database engine
 engine = create_engine(
     db_url_str,
-    pool_pre_ping=not is_sqlite,
+    pool_pre_ping=not is_sqlite and not os.getenv("VERCEL"),
     connect_args=connect_args,
 )
 
@@ -47,4 +47,5 @@ SessionLocal = sessionmaker(
     bind=engine,
     autoflush=False,
     autocommit=False,
+    expire_on_commit=False,
 )
