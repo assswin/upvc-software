@@ -2,10 +2,6 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { apiUrl, setPasscodeSession } from '../utils/api'
 import './PasscodeLogin.css'
 
-const DESKTOP_EXE_URL =
-  (import.meta.env.VITE_DESKTOP_DOWNLOAD_URL as string | undefined)?.trim() ||
-  'https://github.com/yuvaraj-marty-spark/upvc-software/releases/latest/download/LS-Interiors-Setup.exe'
-
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
@@ -23,9 +19,7 @@ export default function PasscodeLogin({ onSuccess, initialError = '' }: Passcode
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
 
   const isStandalone =
-    typeof window !== 'undefined' &&
-    (navigator.userAgent.includes('Electron') ||
-      window.matchMedia('(display-mode: standalone)').matches)
+    typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -105,33 +99,19 @@ export default function PasscodeLogin({ onSuccess, initialError = '' }: Passcode
           </p>
         )}
 
-        {!isStandalone && (
+        {!isStandalone && installPrompt && (
           <div className="passcode-desktop-banner">
             <div>
               <strong>Use LS Interiors on Desktop</strong>
-              <span>
-                If Windows Defender prompts for the .exe, click <b>More info</b> → <b>Run anyway</b>.
-              </span>
+              <span>Install as a standalone desktop app in one click.</span>
             </div>
-            <div className="passcode-desktop-actions">
-              {installPrompt && (
-                <button
-                  type="button"
-                  onClick={() => void handleInstallApp()}
-                  className="passcode-install-btn"
-                >
-                  Install App
-                </button>
-              )}
-              <a
-                href={DESKTOP_EXE_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="passcode-download-btn"
-              >
-                Download (.exe)
-              </a>
-            </div>
+            <button
+              type="button"
+              onClick={() => void handleInstallApp()}
+              className="passcode-install-btn"
+            >
+              Install App
+            </button>
           </div>
         )}
       </div>
