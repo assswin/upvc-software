@@ -2,6 +2,10 @@ import { useState, type FormEvent } from 'react'
 import { apiUrl, setPasscodeSession } from '../utils/api'
 import './PasscodeLogin.css'
 
+const DESKTOP_EXE_URL =
+  (import.meta.env.VITE_DESKTOP_DOWNLOAD_URL as string | undefined)?.trim() ||
+  'https://github.com/yuvaraj-marty-spark/upvc-software/releases/latest/download/LS-Interiors-Setup.exe'
+
 interface PasscodeLoginProps {
   onSuccess: (label: string) => void
   initialError?: string
@@ -11,6 +15,8 @@ export default function PasscodeLogin({ onSuccess, initialError = '' }: Passcode
   const [passcode, setPasscode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(initialError)
+  const isDesktopApp =
+    typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron')
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -70,6 +76,23 @@ export default function PasscodeLogin({ onSuccess, initialError = '' }: Passcode
           <p className="passcode-error" role="alert">
             {error}
           </p>
+        )}
+
+        {!isDesktopApp && (
+          <div className="passcode-desktop-banner">
+            <div>
+              <strong>Use LS Interiors on Desktop</strong>
+              <span>Install the Windows app for a cleaner, dedicated window.</span>
+            </div>
+            <a
+              href={DESKTOP_EXE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="passcode-download-btn"
+            >
+              Download (.exe)
+            </a>
+          </div>
         )}
       </div>
     </div>
