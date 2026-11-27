@@ -2051,25 +2051,62 @@ function Measurements({
               <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>
                 Deleted Windows:
               </span>
-              {deletedWindows.map((entry, idx) => (
-                <button
-                  key={`${entry.row.id}-${idx}`}
-                  type="button"
-                  onClick={() => restoreDeletedWindow(idx)}
-                  style={{
-                    background: '#fef3c7',
-                    color: '#92400e',
-                    border: '1px solid #fde68a',
-                    padding: '6px 10px',
-                    borderRadius: '6px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  ↺ Restore {entry.originalLabel}
-                </button>
-              ))}
+              {deletedWindows.map((entry, idx) => {
+                const { modelId, height, width, glassType } = entry.row
+                const dimensions =
+                  height && width
+                    ? `${height}×${width} ${fromUnit}`
+                    : height
+                      ? `H:${height} ${fromUnit}`
+                      : width
+                        ? `W:${width} ${fromUnit}`
+                        : ''
+                const details = [modelId, dimensions, glassType]
+                  .filter(Boolean)
+                  .join(' · ')
+                return (
+                  <button
+                    key={`${entry.row.id}-${idx}`}
+                    type="button"
+                    onClick={() => restoreDeletedWindow(idx)}
+                    title={
+                      details
+                        ? `Restore ${entry.originalLabel} (${details})`
+                        : `Restore ${entry.originalLabel}`
+                    }
+                    style={{
+                      background: '#fef3c7',
+                      color: '#92400e',
+                      border: '1px solid #fde68a',
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ↺ Restore {entry.originalLabel}
+                    {details ? ` · ${details}` : ''}
+                  </button>
+                )
+              })}
+              <button
+                type="button"
+                onClick={() => setDeletedWindows([])}
+                title="Clear all deleted window restore buttons"
+                style={{
+                  background: '#fee2e2',
+                  color: '#991b1b',
+                  border: '1px solid #fecaca',
+                  padding: '6px 10px',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                ✕ Clear All
+              </button>
             </>
           )}
         </div>
