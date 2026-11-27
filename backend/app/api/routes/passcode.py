@@ -1,4 +1,7 @@
+import base64
 import hashlib
+import hmac
+import json
 import os
 import secrets
 from collections import defaultdict
@@ -47,40 +50,84 @@ def _get_configured_passcodes() -> list[str]:
     load_dotenv(ENV_PATH, override=True)
     raw = os.getenv("APP_PASSCODES", "")
     codes = [c.strip() for c in raw.split(",") if c.strip()]
-    # Strictly limit to the configured passcodes (2 unique users)
     return codes[:2]
+
+
+def _get_signing_key() -> bytes:
+    load_dotenv(ENV_PATH, override=True)
+    material = os.getenv("SECRET_KEY") or os.getenv("APP_PASSCODES") or "ls-interiors-passcode-key"
+    return hashlib.sha256(material.encode("utf-8")).digest()
+
+
+def _sign_session_token(code_hash: str, label: str, session_id: str) -> str:
+    payload_bytes = json.dumps(
+        {"c": code_hash, "l": label, "s": session_id},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii")
+    sig = hmac.new(_get_signing_key(), payload_b64.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{payload_b64}.{sig}"
+
+
+def _verify_session_token(token: str) -> dict | None:
+    if "." not in token:
+        return None
+    payload_b64, sig = token.rsplit(".", 1)
+    expected_sig = hmac.new(
+        _get_signing_key(), payload_b64.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(sig, expected_sig):
+        return None
+    try:
+        data = json.loads(base64.urlsafe_b64decode(payload_b64.encode("ascii")).decode("utf-8"))
+        if not isinstance(data, dict) or not data.get("c") or not data.get("l"):
+            return None
+        valid_hashes = {_hash_value(c) for c in _get_configured_passcodes()}
+        if data["c"] not in valid_hashes:
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _ensure_passcode_session(db: Session, code_hash: str, label: str) -> PasscodeSession:
+    ps = db.scalar(
+        select(PasscodeSession).where(PasscodeSession.passcode_hash == code_hash)
+    )
+    if ps is not None:
+        return ps
+
+    slug = f"passcode-{code_hash[:12]}"
+    shop = db.scalar(select(Shop).where(Shop.slug == slug))
+    if shop is None:
+        shop = Shop(
+            name=f"LS Interiors {label}",
+            slug=slug,
+            is_active=True,
+        )
+        db.add(shop)
+        db.flush()
+
+    ps = PasscodeSession(
+        passcode_hash=code_hash,
+        label=label,
+        shop_id=shop.id,
+        is_in_use=False,
+    )
+    db.add(ps)
+    db.commit()
+    db.refresh(ps)
+    return ps
 
 
 def _sync_passcode_shops(db: Session) -> list[PasscodeSession]:
     codes = _get_configured_passcodes()
     if not codes:
         return []
-
-    sessions: list[PasscodeSession] = []
-    for idx, code in enumerate(codes, start=1):
-        code_hash = _hash_value(code)
-        ps = db.scalar(
-            select(PasscodeSession).where(PasscodeSession.passcode_hash == code_hash)
-        )
-        if ps is None:
-            shop = Shop(
-                name=f"LS Interiors User {idx}",
-                slug=f"passcode-user-{idx}-{secrets.token_hex(4)}",
-                is_active=True,
-            )
-            db.add(shop)
-            db.flush()
-            ps = PasscodeSession(
-                passcode_hash=code_hash,
-                label=f"User {idx}",
-                shop_id=shop.id,
-                is_in_use=False,
-            )
-            db.add(ps)
-            db.commit()
-            db.refresh(ps)
-        sessions.append(ps)
-    return sessions
+    return [
+        _ensure_passcode_session(db, _hash_value(code), f"User {idx}")
+        for idx, code in enumerate(codes, start=1)
+    ]
 
 
 def _check_rate_limit(client_ip: str) -> None:
@@ -120,7 +167,6 @@ def passcode_login(
     entered = payload.passcode.strip()
     entered_hash = _hash_value(entered)
 
-    # Constant-time style lookup across configured passcodes only
     configured = _get_configured_passcodes()
     matched = any(secrets.compare_digest(entered, c) for c in configured)
     if not matched:
@@ -144,7 +190,6 @@ def passcode_login(
         or (now - last_seen).total_seconds() > SESSION_TIMEOUT_SECONDS
     )
 
-    # Block second user if this passcode is currently active and not stale
     if ps.is_in_use and not is_stale:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -154,14 +199,15 @@ def passcode_login(
     _failed_attempts.pop(client_ip, None)
     _locked_until.pop(client_ip, None)
 
-    raw_token = secrets.token_urlsafe(32)
+    session_id = secrets.token_hex(16)
+    signed_token = _sign_session_token(entered_hash, ps.label, session_id)
     ps.is_in_use = True
-    ps.session_token_hash = _hash_value(raw_token)
+    ps.session_token_hash = _hash_value(signed_token)
     ps.last_seen_at = now
     db.commit()
 
     return {
-        "session_token": raw_token,
+        "session_token": signed_token,
         "label": ps.label,
     }
 
@@ -170,20 +216,32 @@ def get_active_passcode_session(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> PasscodeSession:
-    token_hash = _hash_value(credentials.credentials)
-    ps = db.scalar(
-        select(PasscodeSession).where(
-            PasscodeSession.session_token_hash == token_hash,
-            PasscodeSession.is_in_use.is_(True),
-        )
-    )
-    if ps is None:
+    raw_token = credentials.credentials
+    token_data = _verify_session_token(raw_token)
+    if token_data is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired or logged out.",
         )
 
+    ps = _ensure_passcode_session(db, token_data["c"], token_data["l"])
+    token_hash = _hash_value(raw_token)
     now = datetime.now(timezone.utc)
+
+    # Fresh serverless container (/tmp DB) without this session yet: hydrate safely
+    if not ps.is_in_use and ps.session_token_hash is None:
+        ps.is_in_use = True
+        ps.session_token_hash = token_hash
+        ps.last_seen_at = now
+        db.commit()
+        return ps
+
+    if not ps.is_in_use or ps.session_token_hash != token_hash:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired or logged out.",
+        )
+
     last_seen = _as_utc(ps.last_seen_at)
     if last_seen and (now - last_seen).total_seconds() > SESSION_TIMEOUT_SECONDS:
         ps.is_in_use = False
