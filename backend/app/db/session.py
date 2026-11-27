@@ -8,7 +8,11 @@ from app.core.config import settings
 
 # Resolve database URL
 if settings.DATABASE_URL:
-    db_url_str = settings.DATABASE_URL
+    db_url_str = settings.DATABASE_URL.strip()
+    if db_url_str.startswith("postgres://"):
+        db_url_str = "postgresql+psycopg://" + db_url_str[len("postgres://"):]
+    elif db_url_str.startswith("postgresql://"):
+        db_url_str = "postgresql+psycopg://" + db_url_str[len("postgresql://"):]
 elif settings.DB_USER and settings.DB_PASSWORD and settings.DB_NAME:
     db_url_str = str(
         URL.create(
