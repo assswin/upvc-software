@@ -1,3 +1,4 @@
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker
@@ -19,6 +20,8 @@ elif settings.DB_USER and settings.DB_PASSWORD and settings.DB_NAME:
             database=settings.DB_NAME,
         )
     )
+elif os.getenv("VERCEL"):
+    db_url_str = "sqlite:////tmp/ls_interiors.db"
 else:
     db_url_str = "sqlite:///./ls_interiors.db"
 
