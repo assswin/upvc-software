@@ -17,12 +17,30 @@ async def lifespan(app: FastAPI):
     yield
 
 
+class StripApiPrefixMiddleware:
+    """Strip /api prefix when routed through Vercel Services rewrites."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") in ("http", "websocket"):
+            path = scope.get("path", "")
+            if path == "/api":
+                scope = dict(scope, path="/")
+            elif path.startswith("/api/"):
+                scope = dict(scope, path=path[4:])
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(
     title="LS Interiors API",
     description="Window Measurement and Project Management System",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(StripApiPrefixMiddleware)
 
 raw_origins = os.getenv("CORS_ORIGINS")
 allowed_origins = (
