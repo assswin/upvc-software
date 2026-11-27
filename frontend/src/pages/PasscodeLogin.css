@@ -64,11 +64,37 @@
   color: #334155;
 }
 
+.passcode-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
 .passcode-form input {
-  padding: 10px 12px;
+  width: 100%;
+  padding: 10px 64px 10px 12px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   font-size: 14px;
+  box-sizing: border-box;
+}
+
+.passcode-toggle-btn {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.passcode-toggle-btn:hover {
+  background: #f1f5f9;
+  color: #1e293b;
 }
 
 .passcode-submit-btn {

@@ -14,6 +14,7 @@ interface PasscodeLoginProps {
 
 export default function PasscodeLogin({ onSuccess, initialError = '' }: PasscodeLoginProps) {
   const [passcode, setPasscode] = useState('')
+  const [showPasscode, setShowPasscode] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(initialError)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
@@ -78,15 +79,25 @@ export default function PasscodeLogin({ onSuccess, initialError = '' }: Passcode
         <form onSubmit={handleSubmit} className="passcode-form">
           <label htmlFor="passcode-input">
             Passcode
-            <input
-              id="passcode-input"
-              type="password"
-              required
-              autoFocus
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
-              placeholder="Enter unique passcode"
-            />
+            <div className="passcode-input-wrap">
+              <input
+                id="passcode-input"
+                type={showPasscode ? 'text' : 'password'}
+                required
+                autoFocus
+                value={passcode}
+                onChange={(e) => setPasscode(e.target.value)}
+                placeholder="Enter unique passcode"
+              />
+              <button
+                type="button"
+                className="passcode-toggle-btn"
+                onClick={() => setShowPasscode((prev) => !prev)}
+                aria-label={showPasscode ? 'Hide passcode' : 'Show passcode'}
+              >
+                {showPasscode ? 'Hide' : 'Show'}
+              </button>
+            </div>
           </label>
           <button type="submit" className="passcode-submit-btn" disabled={loading}>
             {loading ? 'Checking...' : 'Unlock Workspace'}
