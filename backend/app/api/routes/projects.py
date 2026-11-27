@@ -196,25 +196,10 @@ def save_order(
     db: Session = Depends(get_db),
     shop: Shop = Depends(get_current_shop),
 ):
-    # --- 1. Validate customer ---
-    customer = db.scalar(
-        select(Customer).where(
-            Customer.id == body.project.customer_id,
-            Customer.shop_id == shop.id,
-            Customer.is_active.is_(True),
-        )
-    )
-    if customer is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Active customer not found.",
-        )
-
     cleaned_name = body.project.name.strip()
     project_id = body.project_id
-    is_update = False
 
-    # --- 2. Load or create project (no separate commit yet) ---
+    # --- 1. Load or create project (skip redundant Customer/name checks on unchanged updates) ---
     if project_id:
         project = db.scalar(
             select(Project).where(
@@ -228,25 +213,39 @@ def save_order(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Project not found.",
             )
-        is_update = True
 
-        # Reject duplicate name for same customer (excluding self)
-        dup = db.scalar(
-            select(Project).where(
-                Project.shop_id == shop.id,
-                Project.customer_id == customer.id,
-                Project.name.ilike(cleaned_name),
-                Project.id != project_id,
-                Project.status != "inactive",
+        customer_changed = project.customer_id != body.project.customer_id
+        if customer_changed:
+            customer = db.scalar(
+                select(Customer).where(
+                    Customer.id == body.project.customer_id,
+                    Customer.shop_id == shop.id,
+                    Customer.is_active.is_(True),
+                )
             )
-        )
-        if dup:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="enter unique name",
-            )
+            if customer is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Active customer not found.",
+                )
 
-        project.customer_id = customer.id
+        if customer_changed or project.name.lower() != cleaned_name.lower():
+            dup = db.scalar(
+                select(Project).where(
+                    Project.shop_id == shop.id,
+                    Project.customer_id == body.project.customer_id,
+                    Project.name.ilike(cleaned_name),
+                    Project.id != project_id,
+                    Project.status != "inactive",
+                )
+            )
+            if dup:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="enter unique name",
+                )
+
+        project.customer_id = body.project.customer_id
         project.name = cleaned_name
         project.description = body.project.description
         project.input_unit = body.project.input_unit
@@ -256,6 +255,19 @@ def save_order(
         if body.project.status:
             project.status = body.project.status
     else:
+        customer = db.scalar(
+            select(Customer).where(
+                Customer.id == body.project.customer_id,
+                Customer.shop_id == shop.id,
+                Customer.is_active.is_(True),
+            )
+        )
+        if customer is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Active customer not found.",
+            )
+
         # Check for duplicate name
         dup = db.scalar(
             select(Project).where(

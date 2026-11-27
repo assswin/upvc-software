@@ -20,6 +20,8 @@ from app.models.passcode_session import PasscodeSession
 from app.models.shop import Shop
 
 ENV_PATH = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+load_dotenv(ENV_PATH, override=True)
+
 SESSION_TIMEOUT_SECONDS = 60
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 5
@@ -47,14 +49,12 @@ def _as_utc(dt: datetime | None) -> datetime | None:
 
 
 def _get_configured_passcodes() -> list[str]:
-    load_dotenv(ENV_PATH, override=True)
     raw = os.getenv("APP_PASSCODES", "")
     codes = [c.strip() for c in raw.split(",") if c.strip()]
     return codes[:2]
 
 
 def _get_signing_key() -> bytes:
-    load_dotenv(ENV_PATH, override=True)
     material = os.getenv("SECRET_KEY") or os.getenv("APP_PASSCODES") or "ls-interiors-passcode-key"
     return hashlib.sha256(material.encode("utf-8")).digest()
 
@@ -163,25 +163,22 @@ def passcode_login(
     client_ip = request.client.host if request.client else "unknown"
     _check_rate_limit(client_ip)
 
-    _sync_passcode_shops(db)
     entered = payload.passcode.strip()
-    entered_hash = _hash_value(entered)
-
     configured = _get_configured_passcodes()
-    matched = any(secrets.compare_digest(entered, c) for c in configured)
-    if not matched:
+    matched_idx: int | None = None
+    for idx, code in enumerate(configured, start=1):
+        if secrets.compare_digest(entered, code):
+            matched_idx = idx
+
+    if matched_idx is None:
         _record_failure(client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid passcode.",
         )
 
-    ps = db.scalar(
-        select(PasscodeSession).where(PasscodeSession.passcode_hash == entered_hash)
-    )
-    if ps is None:
-        _record_failure(client_ip)
-        raise HTTPException(status_code=401, detail="Invalid passcode.")
+    entered_hash = _hash_value(entered)
+    ps = _ensure_passcode_session(db, entered_hash, f"User {matched_idx}")
 
     now = datetime.now(timezone.utc)
     last_seen = _as_utc(ps.last_seen_at)
@@ -252,7 +249,7 @@ def get_active_passcode_session(
             detail="Session timed out.",
         )
 
-    if last_seen is None or (now - last_seen).total_seconds() >= 25:
+    if last_seen is None or (now - last_seen).total_seconds() >= 45:
         ps.last_seen_at = now
         db.commit()
     return ps
@@ -261,7 +258,10 @@ def get_active_passcode_session(
 @router.post("/heartbeat")
 def passcode_heartbeat(
     ps: PasscodeSession = Depends(get_active_passcode_session),
+    db: Session = Depends(get_db),
 ):
+    ps.last_seen_at = datetime.now(timezone.utc)
+    db.commit()
     return {"status": "active", "label": ps.label}
 
 
