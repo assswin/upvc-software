@@ -351,6 +351,7 @@ function Measurements({
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(
     initialProjectId || null
   )
+  const [isSaving, setIsSaving] = useState(false)
 
   const currentOrder = useMemo(
     () => savedOrders.find((order) => order.id === currentOrderId),
@@ -875,29 +876,8 @@ function Measurements({
       const customerId = await getOrCreateCustomerId()
       if (!customerId) return null
 
-      let projectId = existingProjectId
-      let projectSerial = ''
-      const isUuid =
-        !!projectId &&
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-          projectId
-        )
       let internalProjectName =
         orderData.projectName || pendingProjectNameRef.current || ''
-
-      if (!internalProjectName && isUuid && projectId) {
-        const existingProjectResponse = await authFetch(
-          apiUrl(`/projects/${projectId}`)
-        )
-        if (!existingProjectResponse.ok) {
-          window.alert('Unable to load the existing measurement order.')
-          return null
-        }
-        const existingProject: BackendProject =
-          await existingProjectResponse.json()
-        internalProjectName = existingProject.name
-        projectSerial = existingProject.serial_number || ''
-      }
 
       if (!internalProjectName) {
         internalProjectName = `Measurements ${orderData.orderDate} ${crypto.randomUUID()}`
@@ -906,77 +886,7 @@ function Measurements({
       pendingProjectNameRef.current = internalProjectName
       setProjectName(internalProjectName)
 
-      const projectPayload = {
-        customer_id: customerId,
-        name: internalProjectName,
-        description: `Order Date: ${orderData.orderDate}`,
-        input_unit: orderData.fromUnit,
-        output_unit: orderData.toUnit,
-        default_tolerance_mm: orderData.defaultTolerance,
-        default_apply_tolerance: orderData.defaultApplyTolerance,
-      }
-
-      if (isUuid && projectId) {
-        const updateResponse = await authFetch(apiUrl(`/projects/${projectId}`), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(projectPayload),
-        })
-
-        if (!updateResponse.ok) {
-          const errorMessage = await updateResponse.text()
-          console.error('Failed to update project:', errorMessage)
-          window.alert('Unable to update the measurement order.')
-          return null
-        } else {
-          const updatedProject: BackendProject = await updateResponse.json()
-          projectSerial = updatedProject.serial_number || ''
-        }
-      }
-
-      if (!projectId || !isUuid) {
-        const createResponse = await authFetch(apiUrl('/projects/'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(projectPayload),
-        })
-
-        if (!createResponse.ok) {
-          const errorMessage = await createResponse.text()
-          console.error('Failed to create project:', errorMessage)
-
-          if (createResponse.status === 400) {
-            const existingProjectsResponse = await authFetch(
-              apiUrl(`/projects/?customer_id=${encodeURIComponent(customerId)}`)
-            )
-            if (existingProjectsResponse.ok) {
-              const existingProjects: BackendProject[] =
-                await existingProjectsResponse.json()
-              const existingProject = existingProjects.find(
-                (project) =>
-                  project.name.toLocaleLowerCase() ===
-                  internalProjectName.toLocaleLowerCase()
-              )
-              if (existingProject) {
-                projectId = existingProject.id
-                projectSerial = existingProject.serial_number || ''
-              }
-            }
-          }
-
-          if (!projectId) {
-            window.alert('Unable to create the measurement order.')
-            return null
-          }
-        } else {
-          const createdProject: BackendProject = await createResponse.json()
-          projectId = createdProject.id
-          projectSerial = createdProject.serial_number || ''
-        }
-      }
-
-      if (!projectId) return null
-
+      // Prepare rows with sync IDs
       const deleteIds = Array.from(deletedMeasurementIdsRef.current)
       const rowsToSave = orderData.rows.map((row) => {
         const syncId = row.backendId
@@ -997,13 +907,23 @@ function Measurements({
         })
       )
 
-      const batchPayload = {
+      // Single atomic request: project + measurements together
+      const savePayload = {
+        project_id: existingProjectId || undefined,
+        project: {
+          customer_id: customerId,
+          name: internalProjectName,
+          description: `Order Date: ${orderData.orderDate}`,
+          input_unit: orderData.fromUnit,
+          output_unit: orderData.toUnit,
+          default_tolerance_mm: orderData.defaultTolerance,
+          default_apply_tolerance: orderData.defaultApplyTolerance,
+        },
         measurements: rowsToSave.map((row, index) => {
           const id = row.backendId || row.syncId
           if (!id) {
             throw new Error('A measurement is missing its synchronization ID.')
           }
-
           return {
             id,
             row_order: index + 1,
@@ -1030,25 +950,30 @@ function Measurements({
         delete_ids: deleteIds,
       }
 
-      const batchResponse = await authFetch(
-        apiUrl(`/projects/${projectId}/measurements/batch`),
+      const response = await authFetch(
+        apiUrl('/projects/save-order'),
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(batchPayload),
+          body: JSON.stringify(savePayload),
         }
       )
 
-      if (!batchResponse.ok) {
-        console.error(
-          'Failed to save measurements:',
-          await batchResponse.text()
-        )
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Failed to save order:', errorText)
         return null
       }
 
-      const synchronizedRows: BackendMeasurement[] =
-        await batchResponse.json()
+      const result: {
+        project: BackendProject
+        measurements: BackendMeasurement[]
+      } = await response.json()
+
+      const projectId = result.project.id
+      const projectSerial = result.project.serial_number || ''
+      const synchronizedRows = result.measurements
+
       if (
         !Array.isArray(synchronizedRows) ||
         synchronizedRows.length !== rowsToSave.length ||
@@ -1116,6 +1041,7 @@ function Measurements({
   }
 
   const saveOrder = async () => {
+    if (isSaving) return
     if (currentOrderId) {
       await updateOrder()
       return
@@ -1126,38 +1052,44 @@ function Measurements({
       return
     }
 
-    const now = new Date().toISOString()
-    const orderData = getCurrentOrderData()
+    setIsSaving(true)
+    try {
+      const now = new Date().toISOString()
+      const orderData = getCurrentOrderData()
 
-    const syncResult = await syncOrderToBackend(null, orderData)
+      const syncResult = await syncOrderToBackend(null, orderData)
 
-    if (!syncResult) {
-      window.alert('Unable to save the order to the server. Please try again.')
-      return
-    }
+      if (!syncResult) {
+        window.alert('Unable to save the order to the server. Please try again.')
+        return
+      }
 
-    const allSerials = savedOrders.map((order) => order.serialNumber)
+      const allSerials = savedOrders.map((order) => order.serialNumber)
 
-    const orderToSave: SavedOrder = {
-      ...orderData,
-      projectName: syncResult.projectName,
-      rows: syncResult.rows,
-      id: syncResult.id,
-      serialNumber:
-        syncResult.serialNumber ||
-        generateProjectSerialNumber(allSerials),
-      createdAt: now,
-      updatedAt: now,
-    }
+      const orderToSave: SavedOrder = {
+        ...orderData,
+        projectName: syncResult.projectName,
+        rows: syncResult.rows,
+        id: syncResult.id,
+        serialNumber:
+          syncResult.serialNumber ||
+          generateProjectSerialNumber(allSerials),
+        createdAt: now,
+        updatedAt: now,
+      }
 
-    if (saveOrdersToStorage([...savedOrders, orderToSave])) {
-      setCurrentOrderId(orderToSave.id)
-      pendingProjectNameRef.current = syncResult.projectName
-      window.alert('Order saved successfully!')
+      if (saveOrdersToStorage([...savedOrders, orderToSave])) {
+        setCurrentOrderId(orderToSave.id)
+        pendingProjectNameRef.current = syncResult.projectName
+        window.alert('Order saved successfully!')
+      }
+    } finally {
+      setIsSaving(false)
     }
   }
 
   const updateOrder = async () => {
+    if (isSaving) return
     const targetId = currentOrderId || initialProjectId
 
     if (!targetId) {
@@ -1170,50 +1102,55 @@ function Measurements({
       return
     }
 
-    const orderData = getCurrentOrderData()
-    const syncResult = await syncOrderToBackend(targetId, orderData)
+    setIsSaving(true)
+    try {
+      const orderData = getCurrentOrderData()
+      const syncResult = await syncOrderToBackend(targetId, orderData)
 
-    if (!syncResult) return
+      if (!syncResult) return
 
-    const finalId = syncResult.id
-    setCurrentOrderId(finalId)
+      const finalId = syncResult.id
+      setCurrentOrderId(finalId)
 
-    const existingOrder = savedOrders.find(
-      (order) => order.id === targetId
-    )
+      const existingOrder = savedOrders.find(
+        (order) => order.id === targetId
+      )
 
-    const otherSerials = savedOrders
-      .filter((order) => order.id !== targetId)
-      .map((order) => order.serialNumber)
+      const otherSerials = savedOrders
+        .filter((order) => order.id !== targetId)
+        .map((order) => order.serialNumber)
 
-    const serialNumber =
-      syncResult.serialNumber ||
-      existingOrder?.serialNumber ||
-      generateProjectSerialNumber(otherSerials)
+      const serialNumber =
+        syncResult.serialNumber ||
+        existingOrder?.serialNumber ||
+        generateProjectSerialNumber(otherSerials)
 
-    const updatedOrder: SavedOrder = {
-      ...(existingOrder || {}),
-      ...orderData,
-      projectName: syncResult.projectName,
-      rows: syncResult.rows,
-      id: finalId,
-      serialNumber,
-      createdAt:
-        existingOrder?.createdAt || orderDate || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
+      const updatedOrder: SavedOrder = {
+        ...(existingOrder || {}),
+        ...orderData,
+        projectName: syncResult.projectName,
+        rows: syncResult.rows,
+        id: finalId,
+        serialNumber,
+        createdAt:
+          existingOrder?.createdAt || orderDate || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
 
-    const updatedOrders = savedOrders.some(
-      (order) => order.id === finalId
-    )
-      ? savedOrders.map((order) =>
-          order.id === finalId ? updatedOrder : order
-        )
-      : [...savedOrders, updatedOrder]
+      const updatedOrders = savedOrders.some(
+        (order) => order.id === finalId
+      )
+        ? savedOrders.map((order) =>
+            order.id === finalId ? updatedOrder : order
+          )
+        : [...savedOrders, updatedOrder]
 
-    if (saveOrdersToStorage(updatedOrders)) {
-      pendingProjectNameRef.current = syncResult.projectName
-      window.alert('Order updated successfully!')
+      if (saveOrdersToStorage(updatedOrders)) {
+        pendingProjectNameRef.current = syncResult.projectName
+        window.alert('Order updated successfully!')
+      }
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -1389,17 +1326,19 @@ function Measurements({
             type="button"
             className="save-order-primary-btn"
             onClick={currentOrderId ? updateOrder : saveOrder}
+            disabled={isSaving}
             style={{
-              background: currentOrderId ? '#10b981' : '#2563eb',
+              background: isSaving ? '#9ca3af' : currentOrderId ? '#10b981' : '#2563eb',
               color: '#ffffff',
               fontWeight: 700,
               padding: '10px 18px',
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
+              cursor: isSaving ? 'not-allowed' : 'pointer',
             }}
           >
-            💾 Save Order
+            {isSaving ? '⏳ Saving...' : '💾 Save Order'}
           </button>
 
           <button

@@ -1,16 +1,24 @@
 
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_shop
+from app.api.routes.measurements import convert_to_mm
 from app.db.dependencies import get_db
 from app.models.customer import Customer
+from app.models.measurement import Measurement
 from app.models.project import Project
 from app.models.shop import Shop
+from app.schemas.measurement import (
+    MeasurementBatchItem,
+    MeasurementResponse,
+)
 from app.schemas.project import (
     ProjectCreate,
     ProjectResponse,
@@ -22,6 +30,32 @@ router = APIRouter(
     prefix="/projects",
     tags=["Projects"],
 )
+
+
+# --------------- Atomic Save-Order schema ---------------
+
+class SaveOrderProject(BaseModel):
+    customer_id: uuid.UUID
+    name: str = Field(min_length=2, max_length=200)
+    serial_number: str | None = None
+    description: str | None = None
+    status: str | None = Field(default="pending", max_length=30)
+    input_unit: str = Field(default="in", pattern="^(in|cm|mm)$")
+    output_unit: str = Field(default="mm", pattern="^(in|cm|mm)$")
+    default_tolerance_mm: Decimal = Field(default=Decimal("5"), ge=0, le=100)
+    default_apply_tolerance: bool = True
+
+
+class SaveOrderRequest(BaseModel):
+    project_id: uuid.UUID | None = None
+    project: SaveOrderProject
+    measurements: list[MeasurementBatchItem]
+    delete_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class SaveOrderResponse(BaseModel):
+    project: ProjectResponse
+    measurements: list[MeasurementResponse]
 
 
 def generate_unique_project_serial_number(db: Session, shop: Shop) -> str:
@@ -137,7 +171,6 @@ def create_project(
         db.add(project)
         try:
             db.commit()
-            db.refresh(project)
             return project
         except IntegrityError as exc:
             db.rollback()
@@ -146,6 +179,242 @@ def create_project(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Project serial number conflicted with an existing record.",
                 ) from exc
+
+
+# --------------- ATOMIC SAVE ORDER ---------------
+# One request = create-or-update project + batch-sync measurements
+# in a single DB transaction.  Replaces the 2–3 sequential calls
+# the frontend used to make.
+
+@router.post(
+    "/save-order",
+    response_model=SaveOrderResponse,
+    status_code=status.HTTP_200_OK,
+)
+def save_order(
+    body: SaveOrderRequest,
+    db: Session = Depends(get_db),
+    shop: Shop = Depends(get_current_shop),
+):
+    # --- 1. Validate customer ---
+    customer = db.scalar(
+        select(Customer).where(
+            Customer.id == body.project.customer_id,
+            Customer.shop_id == shop.id,
+            Customer.is_active.is_(True),
+        )
+    )
+    if customer is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Active customer not found.",
+        )
+
+    cleaned_name = body.project.name.strip()
+    project_id = body.project_id
+    is_update = False
+
+    # --- 2. Load or create project (no separate commit yet) ---
+    if project_id:
+        project = db.scalar(
+            select(Project).where(
+                Project.id == project_id,
+                Project.shop_id == shop.id,
+                Project.status != "inactive",
+            )
+        )
+        if project is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found.",
+            )
+        is_update = True
+
+        # Reject duplicate name for same customer (excluding self)
+        dup = db.scalar(
+            select(Project).where(
+                Project.shop_id == shop.id,
+                Project.customer_id == customer.id,
+                Project.name.ilike(cleaned_name),
+                Project.id != project_id,
+                Project.status != "inactive",
+            )
+        )
+        if dup:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="enter unique name",
+            )
+
+        project.customer_id = customer.id
+        project.name = cleaned_name
+        project.description = body.project.description
+        project.input_unit = body.project.input_unit
+        project.output_unit = body.project.output_unit
+        project.default_tolerance_mm = body.project.default_tolerance_mm
+        project.default_apply_tolerance = body.project.default_apply_tolerance
+        if body.project.status:
+            project.status = body.project.status
+    else:
+        # Check for duplicate name
+        dup = db.scalar(
+            select(Project).where(
+                Project.shop_id == shop.id,
+                Project.customer_id == customer.id,
+                Project.name.ilike(cleaned_name),
+                Project.status != "inactive",
+            )
+        )
+        if dup:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="enter unique name",
+            )
+
+        # Custom or auto serial
+        custom_serial = (
+            body.project.serial_number.strip().upper()
+            if body.project.serial_number and body.project.serial_number.strip()
+            else None
+        )
+        if custom_serial:
+            if db.scalar(
+                select(Project).where(
+                    Project.shop_id == shop.id,
+                    Project.serial_number == custom_serial,
+                )
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Serial number {custom_serial} already exists in your shop.",
+                )
+
+        serial_val = custom_serial or generate_unique_project_serial_number(db, shop)
+        project = Project(
+            shop_id=shop.id,
+            customer_id=customer.id,
+            serial_number=serial_val,
+            name=cleaned_name,
+            description=body.project.description,
+            status=body.project.status or "active",
+            input_unit=body.project.input_unit,
+            output_unit=body.project.output_unit,
+            default_tolerance_mm=body.project.default_tolerance_mm,
+            default_apply_tolerance=body.project.default_apply_tolerance,
+        )
+        db.add(project)
+        db.flush()  # assign project.id without committing
+
+    # --- 3. Batch-sync measurements (same transaction) ---
+    existing_measurements = list(
+        db.scalars(
+            select(Measurement).where(
+                Measurement.project_id == project.id,
+                Measurement.shop_id == shop.id,
+            )
+        ).all()
+    )
+    existing_by_id = {m.id: m for m in existing_measurements}
+
+    m_ids = [item.id for item in body.measurements if item.id is not None]
+    if len(m_ids) != len(set(m_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Measurement IDs must be unique within a batch.",
+        )
+    row_orders = [item.row_order for item in body.measurements]
+    if len(row_orders) != len(set(row_orders)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Measurement row orders must be unique within a batch.",
+        )
+
+    delete_ids = set(body.delete_ids)
+    if delete_ids.intersection(m_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A measurement cannot be updated and deleted in the same batch.",
+        )
+
+    synced: list[Measurement] = []
+    for item in body.measurements:
+        input_unit = item.input_unit or project.input_unit
+        measurement = existing_by_id.get(item.id) if item.id else None
+
+        if measurement is None:
+            measurement = Measurement(
+                id=item.id or uuid.uuid4(),
+                shop_id=shop.id,
+                project_id=project.id,
+                tolerance_mm=(
+                    item.tolerance_mm if item.tolerance_mm is not None
+                    else project.default_tolerance_mm
+                ),
+                apply_tolerance=(
+                    item.apply_tolerance if item.apply_tolerance is not None
+                    else project.default_apply_tolerance
+                ),
+            )
+            db.add(measurement)
+        else:
+            if item.tolerance_mm is not None:
+                measurement.tolerance_mm = item.tolerance_mm
+            if item.apply_tolerance is not None:
+                measurement.apply_tolerance = item.apply_tolerance
+
+        measurement.row_order = item.row_order
+        measurement.height = item.height
+        measurement.width = item.width
+        measurement.input_unit = input_unit
+        measurement.height_mm = convert_to_mm(item.height, input_unit)
+        measurement.width_mm = convert_to_mm(item.width, input_unit)
+        measurement.model_id = item.model_id
+        measurement.variant_letter = item.variant_letter or ""
+        measurement.glass_type = item.glass_type
+        measurement.height_additional_mm = item.height_additional_mm
+        measurement.width_additional_mm = item.width_additional_mm
+        measurement.identification_color = item.identification_color
+        measurement.status = item.status or "pending"
+        synced.append(measurement)
+
+    for mid in delete_ids:
+        m = existing_by_id.get(mid)
+        if m is not None:
+            db.delete(m)
+
+    # --- 4. Compute completion from in-memory rows (no extra SELECT) ---
+    all_rows = [m for m in synced]
+    # Also include existing measurements that weren't touched or deleted
+    touched_ids = {m.id for m in synced}
+    for m in existing_measurements:
+        if m.id not in touched_ids and m.id not in delete_ids:
+            all_rows.append(m)
+
+    all_finished = bool(all_rows) and all(
+        m.status.lower() in ("finished", "completed") for m in all_rows
+    )
+    if all_finished:
+        project.status = "completed"
+    elif project.status == "completed":
+        project.status = "active"
+
+    # --- 5. Single commit for everything ---
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Save conflicted with existing data.",
+        ) from exc
+
+    return SaveOrderResponse(
+        project=ProjectResponse.model_validate(project),
+        measurements=sorted(
+            [MeasurementResponse.model_validate(m) for m in synced],
+            key=lambda m: m.row_order,
+        ),
+    )
 
 
 @router.get("/", response_model=list[ProjectResponse])
@@ -270,9 +539,9 @@ def update_project(
         project.status = project_data.status
 
     db.commit()
-    db.refresh(project)
 
     return project
+
 
 
 @router.patch(
@@ -300,9 +569,9 @@ def update_project_status(
 
     project.status = payload.status
     db.commit()
-    db.refresh(project)
 
     return project
+
 
 
 @router.delete("/{project_id}")

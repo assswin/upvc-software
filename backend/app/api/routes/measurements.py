@@ -133,7 +133,6 @@ def create_measurement(
 
     db.add(measurement)
     db.commit()
-    db.refresh(measurement)
 
     return measurement
 
@@ -425,7 +424,6 @@ def update_measurement(
         measurement.status = measurement_data.status
 
     db.commit()
-    db.refresh(measurement)
 
     return measurement
 
@@ -459,8 +457,6 @@ def update_measurement_status(
         )
 
     measurement.status = payload.status
-    db.commit()
-    db.refresh(measurement)
 
     # Automatically update project status based on all measurements.
     all_measurements = db.scalars(
@@ -478,13 +474,13 @@ def update_measurement_status(
 
         if all_finished and project.status != "completed":
             project.status = "completed"
-            db.commit()
         elif (
             not all_finished
             and project.status == "completed"
         ):
             project.status = "active"
-            db.commit()
+
+    db.commit()
 
     return measurement
 
@@ -519,9 +515,6 @@ def mark_all_measurements_status(
         project.status = "active"
 
     db.commit()
-
-    for measurement in all_measurements:
-        db.refresh(measurement)
 
     return all_measurements
 
