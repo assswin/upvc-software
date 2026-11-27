@@ -268,6 +268,10 @@ function Customers({
   ) {
     event.preventDefault()
     if (!validateCustomerPhone(form.phone.trim())) return
+    if (!form.serialNumber.trim()) {
+      setError('Customer serial number is required.')
+      return
+    }
 
     setSaving(true)
     setError('')
@@ -275,7 +279,7 @@ function Customers({
     const payload = {
       name: form.name.trim(),
       phone: form.phone.trim() || null,
-      serial_number: form.serialNumber.trim() || null,
+      serial_number: form.serialNumber.trim(),
       email: form.email.trim() || null,
       address: form.address.trim() || null,
     }
@@ -316,6 +320,10 @@ function Customers({
 
     if (!editingCustomer) return
     if (!validateCustomerPhone(form.phone.trim())) return
+    if (!form.serialNumber.trim()) {
+      setError('Customer serial number is required.')
+      return
+    }
 
     setSaving(true)
     setError('')
@@ -323,7 +331,7 @@ function Customers({
     const payload = {
       name: form.name.trim(),
       phone: form.phone.trim() || null,
-      serial_number: form.serialNumber.trim() || null,
+      serial_number: form.serialNumber.trim(),
       email: form.email.trim() || null,
       address: form.address.trim() || null,
     }
@@ -1022,9 +1030,10 @@ function Customers({
               <label>
                 {t('Customer Serial Number', 'Customer Serial Number')}
                 <input
+                  required
                   maxLength={50}
                   value={form.serialNumber}
-                  placeholder="e.g. CUST-101 (optional)"
+                  placeholder="e.g. CUST-101"
                   onChange={(event) =>
                     setForm({
                       ...form,
@@ -1133,9 +1142,10 @@ function Customers({
               <label>
                 {t('Customer Serial Number', 'Customer Serial Number')}
                 <input
+                  required
                   maxLength={50}
                   value={form.serialNumber}
-                  placeholder="e.g. CUST-101 (optional)"
+                  placeholder="e.g. CUST-101"
                   onChange={(event) =>
                     setForm({
                       ...form,
