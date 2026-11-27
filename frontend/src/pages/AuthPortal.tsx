@@ -91,7 +91,7 @@ export default function AuthPortal({ onAuthSuccess, initialError = '' }: AuthPor
         body: JSON.stringify({
           full_name: fullName,
           email,
-          phone: phone.trim() || null,
+          phone: phone.trim(),
           password,
         }),
       })
@@ -356,9 +356,12 @@ export default function AuthPortal({ onAuthSuccess, initialError = '' }: AuthPor
               />
             </label>
             <label>
-              Phone (Optional)
+              Phone Number
               <input
                 type="tel"
+                required
+                minLength={10}
+                maxLength={20}
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="9876543210"
