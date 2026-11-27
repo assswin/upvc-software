@@ -292,6 +292,15 @@ function Measurements({
 
   const lastEmittedRowsRef = useRef<MeasurementRow[] | null>(null)
   const deletedMeasurementIdsRef = useRef<Set<string>>(new Set())
+  const [deletedWindows, setDeletedWindows] = useState<
+    {
+      row: MeasurementRow
+      originalLabel: string
+      insertIndex: number
+      wasBaseWindow: boolean
+      promotedRowId?: number
+    }[]
+  >([])
   const pendingProjectNameRef = useRef<string | null>(null)
   const prevToleranceRef = useRef<number>(defaultTolerance)
   const prevApplyToleranceRef = useRef<boolean>(defaultApplyTolerance)
@@ -673,13 +682,117 @@ function Measurements({
     )
   }
 
+  const reletterGroupFromBase = (list: MeasurementRow[], baseIdx: number) => {
+    let letterNum = 1
+    let idx = baseIdx + 1
+    while (idx < list.length && list[idx].variantLetter?.trim()) {
+      list[idx] = {
+        ...list[idx],
+        variantLetter: numberToVariantLetter(letterNum++),
+      }
+      idx++
+    }
+  }
+
   const deleteRow = (id: number) => {
-    const deletedRow = rows.find((row) => row.id === id)
-    if (deletedRow?.backendId) {
+    const targetIndex = rows.findIndex((row) => row.id === id)
+    if (targetIndex === -1) return
+
+    const deletedRow = rows[targetIndex]
+    const labels = resolveWindowLabels(rows, fromUnit, customFormulas)
+    const originalLabel = labels[targetIndex]?.label || `W${targetIndex + 1}`
+    const wasBaseWindow = !(deletedRow.variantLetter?.trim())
+
+    if (deletedRow.backendId) {
       deletedMeasurementIdsRef.current.add(deletedRow.backendId)
     }
 
-    setRows((currentRows) => currentRows.filter((row) => row.id !== id))
+    const nextRows = rows.filter((row) => row.id !== id)
+    let promotedRowId: number | undefined
+
+    if (wasBaseWindow) {
+      // If a variation immediately follows the deleted base window, promote W2a -> W2
+      if (targetIndex < nextRows.length && nextRows[targetIndex].variantLetter?.trim()) {
+        promotedRowId = nextRows[targetIndex].id
+        nextRows[targetIndex] = {
+          ...nextRows[targetIndex],
+          variantLetter: '',
+        }
+        reletterGroupFromBase(nextRows, targetIndex)
+      }
+    } else {
+      // Re-letter remaining variations in the same base window group
+      let baseIdx = targetIndex - 1
+      while (baseIdx > 0 && nextRows[baseIdx]?.variantLetter?.trim()) {
+        baseIdx--
+      }
+      if (baseIdx >= 0 && baseIdx < nextRows.length) {
+        reletterGroupFromBase(nextRows, baseIdx)
+      }
+    }
+
+    setDeletedWindows((prev) => [
+      {
+        row: structuredClone(deletedRow),
+        originalLabel,
+        insertIndex: targetIndex,
+        wasBaseWindow,
+        promotedRowId,
+      },
+      ...prev,
+    ])
+    setRows(nextRows)
+  }
+
+  const restoreDeletedWindow = (entryIndex: number) => {
+    const entry = deletedWindows[entryIndex]
+    if (!entry) return
+
+    if (entry.row.backendId) {
+      deletedMeasurementIdsRef.current.delete(entry.row.backendId)
+    }
+
+    setDeletedWindows((prev) => prev.filter((_, idx) => idx !== entryIndex))
+
+    setRows((currentRows) => {
+      const updated = [...currentRows]
+      const usedIds = new Set(updated.map((r) => r.id))
+      const restoredId = usedIds.has(entry.row.id)
+        ? getNextRowId(updated)
+        : entry.row.id
+
+      const restoredRow: MeasurementRow = {
+        ...structuredClone(entry.row),
+        id: restoredId,
+        variantLetter: entry.wasBaseWindow ? '' : entry.row.variantLetter || 'a',
+      }
+
+      if (entry.wasBaseWindow) {
+        let insertAt = Math.min(entry.insertIndex, updated.length)
+        if (entry.promotedRowId !== undefined) {
+          const promotedIdx = updated.findIndex((r) => r.id === entry.promotedRowId)
+          if (promotedIdx !== -1) {
+            insertAt = promotedIdx
+            updated[promotedIdx] = {
+              ...updated[promotedIdx],
+              variantLetter: 'a',
+            }
+          }
+        }
+        updated.splice(insertAt, 0, restoredRow)
+        reletterGroupFromBase(updated, insertAt)
+      } else {
+        const insertAt = Math.min(entry.insertIndex, updated.length)
+        updated.splice(insertAt, 0, restoredRow)
+        let baseIdx = insertAt
+        while (baseIdx > 0 && updated[baseIdx].variantLetter?.trim()) {
+          baseIdx--
+        }
+        reletterGroupFromBase(updated, baseIdx)
+      }
+
+      return updated
+    })
   }
 
   const saveOrdersToStorage = (orders: SavedOrder[]) => {
@@ -1986,10 +2099,42 @@ function Measurements({
       <div
         style={{
           display: 'flex',
-          justifyContent: 'flex-end',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '10px',
           padding: '12px 0',
         }}
       >
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+          {deletedWindows.length > 0 && (
+            <>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>
+                Deleted Windows:
+              </span>
+              {deletedWindows.map((entry, idx) => (
+                <button
+                  key={`${entry.row.id}-${idx}`}
+                  type="button"
+                  onClick={() => restoreDeletedWindow(idx)}
+                  style={{
+                    background: '#fef3c7',
+                    color: '#92400e',
+                    border: '1px solid #fde68a',
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  ↺ Restore {entry.originalLabel}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+
         <button type="button" onClick={addRow} style={{ background: '#3b82f6' }}>
           + Add Window
         </button>

@@ -932,19 +932,33 @@ export default function Dashboard({
                                 </p>
                               ) : (
                                 <div className="windows-grid">
-                                  {project.windows
-                                    .filter((win) => {
-                                      const currentFilter = windowSubFilter[project.project_id] || 'all'
-                                      if (currentFilter === 'finished') return win.status === 'finished'
-                                      if (currentFilter === 'pending') return win.status !== 'finished'
-                                      return true
-                                    })
-                                    .map((win) => {
-                                      const isWinFinished = win.status === 'finished'
-                                      const isUpdating = updatingWindowId === win.id
-                                      const windowLabelStr = win.variant_letter
-                                        ? `W${win.row_order}${win.variant_letter}`
-                                        : `W${win.row_order}`
+                                  {(() => {
+                                    let nextWinNum = 0
+                                    let currBaseNum = 0
+                                    const winLabelMap = new Map<string, string>()
+                                    for (const w of project.windows) {
+                                      const letter = w.variant_letter?.toLowerCase().trim() || ''
+                                      if (!letter || currBaseNum === 0) {
+                                        currBaseNum = ++nextWinNum
+                                      }
+                                      winLabelMap.set(
+                                        w.id,
+                                        letter ? `W${currBaseNum}${letter}` : `W${currBaseNum}`
+                                      )
+                                    }
+
+                                    return project.windows
+                                      .filter((win) => {
+                                        const currentFilter = windowSubFilter[project.project_id] || 'all'
+                                        if (currentFilter === 'finished') return win.status === 'finished'
+                                        if (currentFilter === 'pending') return win.status !== 'finished'
+                                        return true
+                                      })
+                                      .map((win) => {
+                                        const isWinFinished = win.status === 'finished'
+                                        const isUpdating = updatingWindowId === win.id
+                                        const windowLabelStr =
+                                          winLabelMap.get(win.id) || `W${win.row_order}`
 
                                       return (
                                         <div
@@ -1001,7 +1015,8 @@ export default function Dashboard({
                                           </button>
                                         </div>
                                       )
-                                    })}
+                                    })
+                                  })()}
                                 </div>
                               )}
                             </div>
