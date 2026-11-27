@@ -22,6 +22,7 @@ function createWindow() {
     minHeight: 700,
     autoHideMenuBar: true,
     title: 'LS Interiors',
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

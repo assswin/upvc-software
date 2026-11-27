@@ -122,6 +122,23 @@
   font-size: 13px;
 }
 
+.passcode-desktop-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.passcode-install-btn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .passcode-download-btn {
   flex-shrink: 0;
   padding: 8px 12px;
