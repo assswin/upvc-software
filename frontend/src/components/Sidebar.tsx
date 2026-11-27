@@ -1,5 +1,4 @@
 
-import type { UserProfile } from '../utils/api'
 import './Sidebar.css'
 
 export type Language = 'en' | 'ta'
@@ -16,7 +15,7 @@ interface SidebarProps {
   onLanguageChange: (language: Language) => void
   activePage: PageKey
   onNavigate: (page: PageKey) => void
-  userProfile?: UserProfile | null
+  sessionLabel?: string | null
   onLogout?: () => void
 }
 
@@ -25,7 +24,7 @@ function Sidebar({
   onLanguageChange,
   activePage,
   onNavigate,
-  userProfile,
+  sessionLabel,
   onLogout,
 }: SidebarProps) {
   const menuItems: {
@@ -100,30 +99,24 @@ function Sidebar({
       </nav>
 
       <div className="sidebar-bottom">
-        {userProfile && (
-          <div style={{ marginBottom: '12px', padding: '10px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', fontSize: '12px' }}>
-            <div style={{ fontWeight: 600, color: '#fff' }}>{userProfile.full_name}</div>
-            <div style={{ color: '#94a3b8', marginTop: '2px', wordBreak: 'break-all' }}>{userProfile.email}</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-              <span style={{ textTransform: 'uppercase', fontSize: '10px', color: '#93c5fd' }}>{userProfile.role}</span>
-              {onLogout && (
-                <button
-                  type="button"
-                  onClick={onLogout}
-                  style={{
-                    background: '#dc2626',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '6px',
-                    padding: '4px 10px',
-                    fontSize: '11px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {language === 'en' ? 'Logout' : 'வெளியேறு'}
-                </button>
-              )}
-            </div>
+        {sessionLabel && onLogout && (
+          <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', fontSize: '12px' }}>
+            <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{sessionLabel}</span>
+            <button
+              type="button"
+              onClick={onLogout}
+              style={{
+                background: '#dc2626',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '4px 10px',
+                fontSize: '11px',
+                cursor: 'pointer',
+              }}
+            >
+              {language === 'en' ? 'Logout' : 'வெளியேறு'}
+            </button>
           </div>
         )}
 

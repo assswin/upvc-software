@@ -6,104 +6,70 @@ import Measurements from './pages/Measurements'
 import Settings from './pages/Settings'
 import Dashboard from './pages/Dashboard'
 import Drawings from './pages/Drawings'
-import AuthPortal from './pages/AuthPortal'
+import PasscodeLogin from './pages/PasscodeLogin'
 import {
-  apiRequest,
-  clearAccessToken,
-  getAccessToken,
-  type UserProfile,
+  apiUrl,
+  authFetch,
+  clearPasscodeSession,
+  getSessionLabel,
+  getSessionToken,
 } from './utils/api'
 
 import './App.css'
 
 function App() {
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
-  const [authNotice, setAuthNotice] = useState<string>('')
-  const [authChecking, setAuthChecking] = useState<boolean>(() => Boolean(getAccessToken()))
+  const [sessionLabel, setSessionLabel] = useState<string | null>(() =>
+    getSessionToken() ? getSessionLabel() || 'Active User' : null
+  )
+  const [authNotice, setAuthNotice] = useState('')
   const [language, setLanguage] = useState<Language>('en')
   const [activePage, setActivePage] = useState<PageKey>('dashboard')
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
 
   useEffect(() => {
-    const token = getAccessToken()
-    if (!token) {
-      return
-    }
-    let active = true
-    apiRequest<UserProfile>('/auth/me')
-      .then((profile) => {
-        if (active) setUserProfile(profile)
-      })
-      .catch(() => {
-        clearAccessToken()
-        if (active) setUserProfile(null)
-      })
-      .finally(() => {
-        if (active) setAuthChecking(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [])
-
-  useEffect(() => {
-    const handleExpired = (event: Event) => {
-      const customEvent = event as CustomEvent<{ message?: string }>
-      setUserProfile(null)
+    const handleExpired = () => {
+      setSessionLabel(null)
       setSelectedCustomer(null)
       setSelectedProjectId(null)
-      setAuthNotice(customEvent.detail?.message || '')
+      setAuthNotice('Your session expired. Please enter your passcode again.')
     }
-    window.addEventListener('ls-auth-expired', handleExpired)
-    return () => window.removeEventListener('ls-auth-expired', handleExpired)
+    window.addEventListener('ls-passcode-expired', handleExpired)
+    return () => window.removeEventListener('ls-passcode-expired', handleExpired)
   }, [])
 
   useEffect(() => {
-    if (!userProfile) return
-    const verifySession = () => {
-      if (!getAccessToken()) return
-      void apiRequest<UserProfile>('/auth/me').catch(() => {
-        // 401/403 is handled by authFetch -> ls-auth-expired
-      })
+    if (!sessionLabel) return
+    const sendHeartbeat = () => {
+      if (!getSessionToken()) return
+      void authFetch(apiUrl('/passcode/heartbeat'), { method: 'POST' })
     }
-    const intervalId = window.setInterval(verifySession, 10000)
-    window.addEventListener('focus', verifySession)
-    return () => {
-      window.clearInterval(intervalId)
-      window.removeEventListener('focus', verifySession)
-    }
-  }, [userProfile])
+    sendHeartbeat()
+    const id = window.setInterval(sendHeartbeat, 20000)
+    return () => window.clearInterval(id)
+  }, [sessionLabel])
 
   async function handleLogout() {
     try {
-      await apiRequest('/auth/logout', { method: 'POST' })
+      await authFetch(apiUrl('/passcode/logout'), { method: 'POST' })
     } catch {
       // Ignore network errors on logout
     } finally {
-      clearAccessToken()
-      setUserProfile(null)
+      clearPasscodeSession()
+      setSessionLabel(null)
       setSelectedCustomer(null)
       setSelectedProjectId(null)
       setActivePage('dashboard')
     }
   }
 
-  if (authChecking) {
+  if (!sessionLabel) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        Loading LS Interiors...
-      </div>
-    )
-  }
-
-  if (!userProfile) {
-    return (
-      <AuthPortal
+      <PasscodeLogin
         initialError={authNotice}
-        onAuthSuccess={(profile) => {
+        onSuccess={(label) => {
           setAuthNotice('')
-          setUserProfile(profile)
+          setSessionLabel(label)
         }}
       />
     )
@@ -135,7 +101,7 @@ function App() {
         onLanguageChange={setLanguage}
         activePage={activePage}
         onNavigate={setActivePage}
-        userProfile={userProfile}
+        sessionLabel={sessionLabel}
         onLogout={() => void handleLogout()}
       />
 
@@ -145,8 +111,8 @@ function App() {
             <h1>{language === 'en' ? currentTitle.en : currentTitle.ta}</h1>
             <p>
               {language === 'en'
-                ? `Welcome to LS INTERIORS, ${userProfile.full_name}`
-                : `LS INTERIORS-க்கு வரவேற்கிறோம், ${userProfile.full_name}`}
+                ? 'Welcome to LS INTERIORS'
+                : 'LS INTERIORS-க்கு வரவேற்கிறோம்'}
             </p>
           </div>
         </header>
@@ -190,11 +156,7 @@ function App() {
             }}
           />
         ) : activePage === 'settings' ? (
-          <Settings
-            language={language}
-            userProfile={userProfile}
-            onLogout={() => void handleLogout()}
-          />
+          <Settings language={language} />
         ) : (
           <section className="dashboard-placeholder">{currentTitle.en}</section>
         )}

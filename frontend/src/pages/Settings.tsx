@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import type { Language } from '../components/Sidebar'
-import type { UserProfile } from '../utils/api'
 import {
   calculateSlidingWindow,
   WINDOW_MODELS,
@@ -336,11 +335,9 @@ const FORMULA_PRESETS: Record<WindowModelId, ModelFormulaPreset> = {
 
 interface SettingsProps {
   language: Language
-  userProfile?: UserProfile | null
-  onLogout?: () => void
 }
 
-export default function Settings({ language, userProfile, onLogout }: SettingsProps) {
+export default function Settings({ language }: SettingsProps) {
   const [selectedModel, setSelectedModel] = useState<WindowModelId>('58-2')
   const [customFormulas, setCustomFormulas] = useState<
     Record<string, CustomDeductionOverrides>
@@ -476,51 +473,6 @@ export default function Settings({ language, userProfile, onLogout }: SettingsPr
 
   return (
     <div className="settings-workspace">
-      {userProfile && (
-        <div
-          style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: '12px',
-            padding: '16px 20px',
-            marginBottom: '18px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '12px',
-          }}
-        >
-          <div>
-            <h3 style={{ margin: 0, fontSize: '16px', color: '#0f172a' }}>
-              {language === 'en' ? 'Connected User Profile' : 'பயனர் சுயவிவரம்'}
-            </h3>
-            <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#475569' }}>
-              <strong>{userProfile.full_name}</strong> · {userProfile.email}
-              {userProfile.phone ? ` · ${userProfile.phone}` : ''} · Role: <strong>{userProfile.role}</strong>
-            </p>
-          </div>
-          {onLogout && (
-            <button
-              type="button"
-              onClick={onLogout}
-              style={{
-                background: '#dc2626',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '8px 14px',
-                fontSize: '13px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              {language === 'en' ? 'Sign Out' : 'வெளியேறு'}
-            </button>
-          )}
-        </div>
-      )}
-
       <div className="settings-header">
         <h2>
           {language === 'en'
