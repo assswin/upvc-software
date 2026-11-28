@@ -145,7 +145,14 @@ function App() {
           <Customers
             language={language}
             selectedCustomer={selectedCustomer}
-            onSelectCustomer={setSelectedCustomer}
+            onSelectCustomer={(customer) => {
+              if (customer?.id !== selectedCustomer?.id) {
+                clearDraftFormulas()
+                setSelectedProjectId(null)
+                setActiveFormulaProjectId(null)
+              }
+              setSelectedCustomer(customer)
+            }}
             onNewOrder={handleNewOrder}
           />
         ) : activePage === 'measurementsOrders' ? (

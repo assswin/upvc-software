@@ -425,6 +425,10 @@ function Measurements({
           if (!response.ok) return
           const customerProjects: BackendProject[] = await response.json()
           if (!Array.isArray(customerProjects) || customerProjects.length === 0) {
+            if (!cancelled) {
+              setCurrentOrderId(null)
+              onProjectActive?.(null)
+            }
             return
           }
           project = customerProjects[0]
@@ -1109,12 +1113,12 @@ function Measurements({
       }
 
       if (saveOrdersToStorage([...savedOrders, orderToSave])) {
-        setCurrentOrderId(orderToSave.id)
-        onProjectActive?.(orderToSave.id)
         if (Object.keys(customFormulas).length > 0) {
-          void saveProjectFormulasToServer(orderToSave.id, customFormulas)
+          await saveProjectFormulasToServer(orderToSave.id, customFormulas)
           clearDraftFormulas()
         }
+        setCurrentOrderId(orderToSave.id)
+        onProjectActive?.(orderToSave.id)
         pendingProjectNameRef.current = syncResult.projectName
         window.alert('Order saved successfully!')
       }

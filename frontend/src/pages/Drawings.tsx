@@ -18,7 +18,6 @@ import type { Customer } from './Customers'
 import type { MeasurementRow } from './Measurements'
 import { convertMeasurementsToCalculationResults } from '../utils/cadBridge'
 import { convertToMm, WINDOW_MODELS } from '../utils/slidingCalculations'
-import type { CustomDeductionOverrides } from '../utils/slidingCalculations'
 import { resolveWindowLabels } from '../utils/windowIdentity'
 import {
   generateWorkshopOrderPDF,
@@ -71,7 +70,6 @@ interface DrawingRecord {
 
 type ExportType = 'workshop' | 'glass'
 
-const FORMULAS_STORAGE_KEY = 'ls-interiors-custom-formulas'
 const PAGE_SIZE = 8
 
 function getErrorMessage(error: unknown): string {
@@ -87,23 +85,6 @@ async function readJson<T>(response: Response): Promise<T> {
   }
 
   return response.json() as Promise<T>
-}
-
-function loadSavedFormulas(): Record<string, CustomDeductionOverrides> {
-  try {
-    const stored = localStorage.getItem(FORMULAS_STORAGE_KEY)
-    if (!stored) return {}
-
-    const parsed: unknown = JSON.parse(stored)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, CustomDeductionOverrides>
-    }
-
-    throw new Error('Saved calculation settings have an invalid format.')
-  } catch (error) {
-    console.error('Unable to load saved calculation settings:', error)
-    return {}
-  }
 }
 
 function getMeshPanel(result: CalculationResult) {
@@ -181,41 +162,15 @@ export default function Drawings({
   const selectedCustomerIdRef = useRef('')
   const initialProjectResolvedRef = useRef(false)
   const [records, setRecords] = useState<DrawingRecord[]>([])
-  const [customFormulas, setCustomFormulas] = useState(loadSavedFormulas)
 
   useEffect(() => {
-    let cancelled = false
     const syncFormulas = () => {
-      setCustomFormulas(loadSavedFormulas())
+      setRefreshKey((k) => k + 1)
     }
-    const fetchBackendFormulas = async () => {
-      try {
-        const response = await authFetch(apiUrl('/settings/formulas'))
-        if (!response.ok || cancelled) return
-        const data: { formulas?: Record<string, CustomDeductionOverrides> } =
-          await response.json()
-        if (
-          !cancelled &&
-          data?.formulas &&
-          typeof data.formulas === 'object' &&
-          Object.keys(data.formulas).length > 0
-        ) {
-          localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(data.formulas))
-          setCustomFormulas(data.formulas)
-        }
-      } catch {
-        // Ignore network errors and keep localStorage fallback.
-      }
-    }
-    void fetchBackendFormulas()
-
     window.addEventListener('storage', syncFormulas)
-    window.addEventListener('focus', syncFormulas)
     window.addEventListener('ls-formulas-updated', syncFormulas)
     return () => {
-      cancelled = true
       window.removeEventListener('storage', syncFormulas)
-      window.removeEventListener('focus', syncFormulas)
       window.removeEventListener('ls-formulas-updated', syncFormulas)
     }
   }, [])
@@ -373,19 +328,15 @@ export default function Drawings({
         const loadedRecords: DrawingRecord[] = []
 
         for (const { project, measurements, projectFormulas } of projectMeasurements) {
-          const activeFormulas =
-            Object.keys(projectFormulas).length > 0
-              ? projectFormulas
-              : customFormulas
           const unit = project.input_unit || 'in'
           const rows = measurements.map((measurement, index) =>
             mapMeasurementToRow(measurement, project, index),
           )
-          const labels = resolveWindowLabels(rows, unit, activeFormulas)
+          const labels = resolveWindowLabels(rows, unit, projectFormulas)
           const results = convertMeasurementsToCalculationResults(
             rows,
             labels.map((item) => item.label),
-            activeFormulas,
+            projectFormulas,
             unit,
           )
 
@@ -427,7 +378,7 @@ export default function Drawings({
     return () => {
       cancelled = true
     }
-  }, [selectedCustomer, customFormulas, refreshKey])
+  }, [selectedCustomer, refreshKey])
 
   const selectCustomer = (customer: Customer) => {
     selectedCustomerIdRef.current = customer.id
