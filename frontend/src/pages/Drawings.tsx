@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiUrl, authFetch } from '../utils/api'
+import { fetchProjectFormulas } from '../utils/formulaStorage'
 import {
   Download,
   Eye,
@@ -351,9 +352,12 @@ export default function Drawings({
 
         const projectMeasurements = await Promise.all(
           customerProjects.map(async (project) => {
-            const response = await authFetch(
-              apiUrl(`/projects/${encodeURIComponent(project.id)}/measurements/`),
-            )
+            const [response, projectFormulas] = await Promise.all([
+              authFetch(
+                apiUrl(`/projects/${encodeURIComponent(project.id)}/measurements/`),
+              ),
+              fetchProjectFormulas(project.id),
+            ])
             const measurements = await readJson<BackendMeasurement[]>(response)
 
             if (!Array.isArray(measurements)) {
@@ -362,22 +366,26 @@ export default function Drawings({
               )
             }
 
-            return { project, measurements }
+            return { project, measurements, projectFormulas }
           }),
         )
 
         const loadedRecords: DrawingRecord[] = []
 
-        for (const { project, measurements } of projectMeasurements) {
+        for (const { project, measurements, projectFormulas } of projectMeasurements) {
+          const activeFormulas =
+            Object.keys(projectFormulas).length > 0
+              ? projectFormulas
+              : customFormulas
           const unit = project.input_unit || 'in'
           const rows = measurements.map((measurement, index) =>
             mapMeasurementToRow(measurement, project, index),
           )
-          const labels = resolveWindowLabels(rows, unit, customFormulas)
+          const labels = resolveWindowLabels(rows, unit, activeFormulas)
           const results = convertMeasurementsToCalculationResults(
             rows,
             labels.map((item) => item.label),
-            customFormulas,
+            activeFormulas,
             unit,
           )
 

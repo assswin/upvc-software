@@ -14,6 +14,7 @@ import {
   getSessionLabel,
   getSessionToken,
 } from './utils/api'
+import { clearDraftFormulas } from './utils/formulaStorage'
 
 import './App.css'
 
@@ -26,12 +27,14 @@ function App() {
   const [activePage, setActivePage] = useState<PageKey>('dashboard')
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [activeFormulaProjectId, setActiveFormulaProjectId] = useState<string | null>(null)
 
   useEffect(() => {
     const handleExpired = () => {
       setSessionLabel(null)
       setSelectedCustomer(null)
       setSelectedProjectId(null)
+      setActiveFormulaProjectId(null)
       setAuthNotice('Your session expired. Please enter your passcode again.')
     }
     window.addEventListener('ls-passcode-expired', handleExpired)
@@ -59,6 +62,7 @@ function App() {
       setSessionLabel(null)
       setSelectedCustomer(null)
       setSelectedProjectId(null)
+      setActiveFormulaProjectId(null)
       setActivePage('dashboard')
     }
   }
@@ -89,8 +93,10 @@ function App() {
   const currentTitle = pageTitles[activePage]
 
   function handleNewOrder(customer: Customer) {
+    clearDraftFormulas()
     setSelectedCustomer(customer)
     setSelectedProjectId(null)
+    setActiveFormulaProjectId(null)
     setActivePage('measurementsOrders')
   }
 
@@ -121,13 +127,17 @@ function App() {
           <Dashboard
             language={language}
             onOpenProject={(customer, project) => {
+              clearDraftFormulas()
               setSelectedCustomer(customer)
               setSelectedProjectId(project.id)
+              setActiveFormulaProjectId(project.id)
               setActivePage('measurementsOrders')
             }}
             onNewOrder={() => {
+              clearDraftFormulas()
               setSelectedCustomer(null)
               setSelectedProjectId(null)
+              setActiveFormulaProjectId(null)
               setActivePage('measurementsOrders')
             }}
           />
@@ -144,19 +154,28 @@ function App() {
             selectedCustomer={selectedCustomer}
             initialProjectId={selectedProjectId}
             language={language}
+            onProjectActive={setActiveFormulaProjectId}
           />
         ) : activePage === 'drawings' ? (
           <Drawings
             language={language}
             initialProjectId={selectedProjectId}
             onOpenMeasurements={(projId, customer) => {
-              if (projId) setSelectedProjectId(projId)
+              clearDraftFormulas()
+              if (projId) {
+                setSelectedProjectId(projId)
+                setActiveFormulaProjectId(projId)
+              }
               if (customer) setSelectedCustomer(customer)
               setActivePage('measurementsOrders')
             }}
           />
         ) : activePage === 'settings' ? (
-          <Settings language={language} />
+          <Settings
+            language={language}
+            selectedProjectId={activeFormulaProjectId}
+            selectedCustomer={selectedCustomer}
+          />
         ) : (
           <section className="dashboard-placeholder">{currentTitle.en}</section>
         )}

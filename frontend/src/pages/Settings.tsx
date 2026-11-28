@@ -1,7 +1,16 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { Language } from '../components/Sidebar'
-import { apiUrl, authFetch } from '../utils/api'
+import type { Customer } from './Customers'
+import {
+  clearDraftFormulas,
+  fetchProjectFormulas,
+  loadDraftFormulas,
+  loadLocalProjectFormulas,
+  saveDraftFormulas,
+  saveLocalProjectFormulas,
+  saveProjectFormulasToServer,
+} from '../utils/formulaStorage'
 import {
   calculateSlidingWindow,
   WINDOW_MODELS,
@@ -9,8 +18,6 @@ import {
   type CustomDeductionOverrides,
 } from '../utils/slidingCalculations'
 import './Settings.css'
-
-const FORMULAS_STORAGE_KEY = 'ls-interiors-custom-formulas'
 
 type ModelFormulaPreset = {
   name: string
@@ -384,74 +391,54 @@ const FORMULA_PRESETS: Record<WindowModelId, ModelFormulaPreset> = {
 
 interface SettingsProps {
   language: Language
+  selectedProjectId?: string | null
+  selectedCustomer?: Customer | null
 }
 
-export default function Settings({ language }: SettingsProps) {
+export default function Settings({
+  language,
+  selectedProjectId = null,
+  selectedCustomer = null,
+}: SettingsProps) {
   const [selectedModel, setSelectedModel] = useState<WindowModelId>('58-2')
   const [customFormulas, setCustomFormulas] = useState<
     Record<string, CustomDeductionOverrides>
-  >(() => {
-    try {
-      const stored = localStorage.getItem(FORMULAS_STORAGE_KEY)
-      return stored ? JSON.parse(stored) : {}
-    } catch {
-      return {}
-    }
-  })
+  >(() =>
+    selectedProjectId
+      ? loadLocalProjectFormulas(selectedProjectId)
+      : loadDraftFormulas()
+  )
   const [saveStatus, setSaveStatus] = useState<string>('')
   const [isSyncing, setIsSyncing] = useState(false)
   const syncTimerRef = useRef<number | null>(null)
   const latestFormulasRef = useRef(customFormulas)
+  const latestProjectIdRef = useRef(selectedProjectId)
   const hasPendingSyncRef = useRef(false)
   latestFormulasRef.current = customFormulas
+  latestProjectIdRef.current = selectedProjectId
 
   const activePreset = FORMULA_PRESETS[selectedModel]
   const activeOverrides = customFormulas[selectedModel] || {}
 
   const persistFormulasLocal = (nextFormulas: Record<string, CustomDeductionOverrides>) => {
-    try {
-      localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(nextFormulas))
-      window.dispatchEvent(new CustomEvent('ls-formulas-updated'))
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
-  const syncFormulasToBackend = async (
-    nextFormulas: Record<string, CustomDeductionOverrides>
-  ): Promise<boolean> => {
-    try {
-      const response = await authFetch(apiUrl('/settings/formulas'), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ formulas: nextFormulas }),
-      })
-      return response.ok
-    } catch (e) {
-      console.error('Failed to sync formulas to server:', e)
-      return false
+    if (selectedProjectId) {
+      saveLocalProjectFormulas(selectedProjectId, nextFormulas)
+    } else {
+      saveDraftFormulas(nextFormulas)
     }
   }
 
   useEffect(() => {
     let cancelled = false
+    if (!selectedProjectId) {
+      setCustomFormulas(loadDraftFormulas())
+      return
+    }
+    setCustomFormulas(loadLocalProjectFormulas(selectedProjectId))
     const loadFromBackend = async () => {
-      try {
-        const response = await authFetch(apiUrl('/settings/formulas'))
-        if (!response.ok || cancelled) return
-        const data: { formulas?: Record<string, CustomDeductionOverrides> } =
-          await response.json()
-        if (
-          !cancelled &&
-          data?.formulas &&
-          typeof data.formulas === 'object' &&
-          Object.keys(data.formulas).length > 0
-        ) {
-          setCustomFormulas(data.formulas)
-          persistFormulasLocal(data.formulas)
-        }
-      } catch (e) {
-        console.error('Failed to load formulas from server:', e)
+      const formulas = await fetchProjectFormulas(selectedProjectId)
+      if (!cancelled) {
+        setCustomFormulas(formulas)
       }
     }
     void loadFromBackend()
@@ -461,21 +448,26 @@ export default function Settings({ language }: SettingsProps) {
         window.clearTimeout(syncTimerRef.current)
         syncTimerRef.current = null
       }
-      if (hasPendingSyncRef.current) {
+      if (hasPendingSyncRef.current && latestProjectIdRef.current) {
         hasPendingSyncRef.current = false
-        void syncFormulasToBackend(latestFormulasRef.current)
+        void saveProjectFormulasToServer(
+          latestProjectIdRef.current,
+          latestFormulasRef.current
+        )
       }
     }
-  }, [])
+  }, [selectedProjectId])
 
   const scheduleBackendSync = (nextFormulas: Record<string, CustomDeductionOverrides>) => {
+    if (!selectedProjectId) return
     hasPendingSyncRef.current = true
     if (syncTimerRef.current !== null) {
       window.clearTimeout(syncTimerRef.current)
     }
+    const targetProjectId = selectedProjectId
     syncTimerRef.current = window.setTimeout(() => {
       hasPendingSyncRef.current = false
-      void syncFormulasToBackend(nextFormulas)
+      void saveProjectFormulasToServer(targetProjectId, nextFormulas)
     }, 600)
   }
 
@@ -514,13 +506,19 @@ export default function Settings({ language }: SettingsProps) {
     }
     setIsSyncing(true)
     persistFormulasLocal(customFormulas)
-    const ok = await syncFormulasToBackend(customFormulas)
+    const ok = selectedProjectId
+      ? await saveProjectFormulasToServer(selectedProjectId, customFormulas)
+      : true
     setIsSyncing(false)
     setSaveStatus(
       ok
-        ? language === 'en'
-          ? 'Formula Settings Saved & Synced!'
-          : 'ஃபார்முலா அமைப்புகள் சேமிக்கப்பட்டன!'
+        ? selectedProjectId
+          ? language === 'en'
+            ? 'Order Formula Settings Saved!'
+            : 'ஆர்டர் ஃபார்முலா அமைப்புகள் சேமிக்கப்பட்டன!'
+          : language === 'en'
+            ? 'Ready for New Order (Will Save with Order)!'
+            : 'புதிய ஆர்டருக்குத் தயார்!'
         : language === 'en'
           ? 'Saved locally (server sync failed)'
           : 'உள்ளூரில் சேமிக்கப்பட்டது'
@@ -533,7 +531,9 @@ export default function Settings({ language }: SettingsProps) {
       const updated = { ...prev }
       delete updated[selectedModel]
       persistFormulasLocal(updated)
-      void syncFormulasToBackend(updated)
+      if (selectedProjectId) {
+        void saveProjectFormulasToServer(selectedProjectId, updated)
+      }
       return updated
     })
     setSaveStatus('Reset to workshop defaults')
@@ -543,18 +543,16 @@ export default function Settings({ language }: SettingsProps) {
   const resetAllModels = () => {
     const confirmed = window.confirm(
       language === 'en'
-        ? 'Are you sure you want to reset ALL profile formulas to workshop standards?'
-        : 'அனைத்து ஃபார்முலாக்களையும் ஆரம்ப நிலைக்கு மீட்டமைக்க விரும்புகிறீர்களா?'
+        ? 'Are you sure you want to reset ALL profile formulas for this order to workshop standards?'
+        : 'இந்த ஆர்டருக்கான அனைத்து ஃபார்முலாக்களையும் ஆரம்ப நிலைக்கு மீட்டமைக்க விரும்புகிறீர்களா?'
     )
     if (!confirmed) return
 
     setCustomFormulas({})
-    try {
-      localStorage.removeItem(FORMULAS_STORAGE_KEY)
-      window.dispatchEvent(new CustomEvent('ls-formulas-updated'))
-      void syncFormulasToBackend({})
-    } catch (e) {
-      console.error(e)
+    if (selectedProjectId) {
+      void saveProjectFormulasToServer(selectedProjectId, {})
+    } else {
+      clearDraftFormulas()
     }
     setSaveStatus('All models reset to defaults')
     setTimeout(() => setSaveStatus(''), 2000)
@@ -629,9 +627,31 @@ export default function Settings({ language }: SettingsProps) {
         </h2>
         <p>
           {language === 'en'
-            ? 'Customize millimeter cutting deductions and glass formulas across all window & door profile series. Changes apply dynamically to all measurements.'
-            : 'அனைத்து சுயவிவர தொடர்களுக்கும் வெட்டு கழித்தல் மற்றும் கண்ணாடி கணக்கீடுகளை மாற்றவும்.'}
+            ? 'Customize millimeter cutting deductions and glass formulas per order. Every new customer/order starts at workshop defaults, and existing orders keep their own saved formulas.'
+            : 'ஒவ்வொரு ஆர்டருக்கும் தனித்தனியாக வெட்டு கழித்தல் மற்றும் கண்ணாடி கணக்கீடுகளை மாற்றவும்.'}
         </p>
+        <div
+          style={{
+            marginTop: '10px',
+            padding: '8px 12px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            fontWeight: 600,
+            background: selectedProjectId ? '#ecfdf5' : '#eff6ff',
+            color: selectedProjectId ? '#065f46' : '#1e40af',
+            border: selectedProjectId
+              ? '1px solid #a7f3d0'
+              : '1px solid #bfdbfe',
+          }}
+        >
+          {selectedProjectId
+            ? `Editing formulas for saved order${
+                selectedCustomer?.name ? ` (${selectedCustomer.name})` : ''
+              }`
+            : `Editing formulas for New Order${
+                selectedCustomer?.name ? ` (${selectedCustomer.name})` : ''
+              } — starts at Workshop Default`}
+        </div>
       </div>
 
       <div className="settings-layout">

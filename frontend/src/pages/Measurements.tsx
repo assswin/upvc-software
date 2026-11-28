@@ -10,6 +10,13 @@ import { generateProjectSerialNumber } from '../utils/projectSerials'
 import { resolveWindowLabels } from '../utils/windowIdentity'
 import { apiUrl, authFetch } from '../utils/api'
 import {
+  clearDraftFormulas,
+  fetchProjectFormulas,
+  loadDraftFormulas,
+  loadLocalProjectFormulas,
+  saveProjectFormulasToServer,
+} from '../utils/formulaStorage'
+import {
   calculateSlidingWindow,
   WINDOW_MODELS,
   type WindowModelId,
@@ -117,10 +124,10 @@ export type MeasurementsProps = {
   selectedCustomer: Customer | null
   initialProjectId?: string | null
   language?: Language
+  onProjectActive?: (projectId: string | null) => void
 }
 
 const STORAGE_KEY = 'ls-interiors-saved-orders'
-const FORMULAS_STORAGE_KEY = 'ls-interiors-custom-formulas'
 
 const getTodayDate = () => {
   const today = new Date()
@@ -163,15 +170,6 @@ const loadSavedOrders = (): SavedOrder[] => {
     })
   } catch {
     return []
-  }
-}
-
-const loadCustomFormulas = (): Record<string, CustomDeductionOverrides> => {
-  try {
-    const stored = localStorage.getItem(FORMULAS_STORAGE_KEY)
-    return stored ? JSON.parse(stored) : {}
-  } catch {
-    return {}
   }
 }
 
@@ -273,6 +271,7 @@ function Measurements({
   selectedCustomer,
   initialProjectId,
   language = 'en',
+  onProjectActive,
 }: MeasurementsProps) {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
   const [isCadModalOpen, setIsCadModalOpen] = useState(false)
@@ -362,33 +361,31 @@ function Measurements({
   )
 
   const [customFormulas, setCustomFormulas] =
-    useState<Record<string, CustomDeductionOverrides>>(loadCustomFormulas)
+    useState<Record<string, CustomDeductionOverrides>>(() =>
+      initialProjectId
+        ? loadLocalProjectFormulas(initialProjectId)
+        : loadDraftFormulas()
+    )
 
   useEffect(() => {
     let cancelled = false
+    const activeId = currentOrderId || initialProjectId || null
     const syncFormulas = () => {
-      setCustomFormulas(loadCustomFormulas())
+      setCustomFormulas(
+        activeId ? loadLocalProjectFormulas(activeId) : loadDraftFormulas()
+      )
     }
-    const fetchBackendFormulas = async () => {
-      try {
-        const response = await authFetch(apiUrl('/settings/formulas'))
-        if (!response.ok || cancelled) return
-        const data: { formulas?: Record<string, CustomDeductionOverrides> } =
-          await response.json()
-        if (
-          !cancelled &&
-          data?.formulas &&
-          typeof data.formulas === 'object' &&
-          Object.keys(data.formulas).length > 0
-        ) {
-          localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(data.formulas))
-          setCustomFormulas(data.formulas)
+
+    if (activeId) {
+      setCustomFormulas(loadLocalProjectFormulas(activeId))
+      void fetchProjectFormulas(activeId).then((formulas) => {
+        if (!cancelled) {
+          setCustomFormulas(formulas)
         }
-      } catch {
-        // Ignore network errors and keep localStorage fallback.
-      }
+      })
+    } else {
+      setCustomFormulas(loadDraftFormulas())
     }
-    void fetchBackendFormulas()
 
     window.addEventListener('storage', syncFormulas)
     window.addEventListener('focus', syncFormulas)
@@ -400,7 +397,7 @@ function Measurements({
       window.removeEventListener('focus', syncFormulas)
       window.removeEventListener('ls-formulas-updated', syncFormulas)
     }
-  }, [])
+  }, [currentOrderId, initialProjectId])
 
   // Keep manually entered customer details, but display the selected
   // customer's latest details whenever a customer is selected.
@@ -436,6 +433,7 @@ function Measurements({
         if (cancelled || !project) return
 
         setCurrentOrderId(project.id)
+        onProjectActive?.(project.id)
         setProjectName(project.name)
         pendingProjectNameRef.current = project.name
         deletedMeasurementIdsRef.current.clear()
@@ -1112,6 +1110,11 @@ function Measurements({
 
       if (saveOrdersToStorage([...savedOrders, orderToSave])) {
         setCurrentOrderId(orderToSave.id)
+        onProjectActive?.(orderToSave.id)
+        if (Object.keys(customFormulas).length > 0) {
+          void saveProjectFormulasToServer(orderToSave.id, customFormulas)
+          clearDraftFormulas()
+        }
         pendingProjectNameRef.current = syncResult.projectName
         window.alert('Order saved successfully!')
       }
@@ -1205,6 +1208,9 @@ function Measurements({
     setToUnit('mm')
     setRows([createEmptyRow(1, 5, true, identificationColors[0])])
     setCurrentOrderId(null)
+    clearDraftFormulas()
+    setCustomFormulas({})
+    onProjectActive?.(null)
 
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
