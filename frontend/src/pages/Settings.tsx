@@ -1,3 +1,4 @@
+
 import { useState } from 'react'
 import type { Language } from '../components/Sidebar'
 import {
@@ -158,6 +159,22 @@ const FORMULA_PRESETS: Record<WindowModelId, ModelFormulaPreset> = {
     glassDeduction: 152,
     formulaDescription:
       'Sash H: H-88 | Sash W: (W+90)/3 | Glass: Shutter-152 | Interlock: Sash H-5',
+  },
+  '85-3-mesh': {
+    name: '3 Track Sliding Door with Mesh – 85 mm',
+    tamilName: '3 டிராக் ஸ்லைடிங் டோர் மெஷ் (85mm)',
+    category: 'sliding',
+    material: '85 mm',
+    heightDeduction: 88,
+    widthType: 'addition',
+    widthLabel: 'Width Overlap Addition ((W + X)/2)',
+    widthValue: 3,
+    glassReference: 'shutter',
+    glassDeduction: 152,
+    hasMesh: true,
+    defaultMeshDeduction: 0,
+    formulaDescription:
+      'Sash H: H-88 | Sash W: (W+3)/2 | Mesh: Same H & W as Sash | Glass: Shutter-152 | Interlock: Sash H-5',
   },
   'open-single': {
     name: 'Single Open Casement Window',
@@ -706,7 +723,7 @@ export default function Settings({ language }: SettingsProps) {
               </div>
             )}
 
-            {/* Mosquito Mesh Deduction (for 2.5 track mesh) */}
+            {/* Mosquito Mesh Deduction (for mesh models) */}
             {activePreset.hasMesh && (
               <div className="settings-field">
                 <label>

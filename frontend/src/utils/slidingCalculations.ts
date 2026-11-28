@@ -13,6 +13,7 @@ export type WindowModelId =
   | "85-2"
   | "85-2.5"
   | "85-3"
+  | "85-3-mesh"
   | "open-single"
   | "open-double"
   | "open-triple"
@@ -119,7 +120,16 @@ export const WINDOW_MODELS: WindowModelDefinition[] = [
     name: "3 Track Sliding Door – 85 mm",
     category: "sliding",
     material: "85 mm",
-    shortCode: "SL/SL/SL [DOOR]",
+    shortCode: "SL / SL / SL / DOOR",
+    glassReference: "shutter",
+    defaultGlassDeductionMM: 152,
+  },
+  {
+    id: "85-3-mesh",
+    name: "3 Track Sliding Door with Mesh – 85 mm",
+    category: "sliding",
+    material: "85 mm",
+    shortCode: "SL / SL / SL / DOOR / MESH",
     glassReference: "shutter",
     defaultGlassDeductionMM: 152,
   },
@@ -628,6 +638,34 @@ export function calculateSlidingWindow(
         glassPieces: 3,
         meshHeight: null,
         meshWidth: null,
+      };
+      break;
+    }
+
+    case "85-3-mesh": {
+      const hDed = customOverrides.heightDeductionMM ?? 88;
+      const wAdd =
+        customOverrides.widthAdditionMM ??
+        (customOverrides.widthDeductionMM !== undefined
+          ? -customOverrides.widthDeductionMM
+          : 3);
+      const gDed = getGlassDeduction(152);
+      const sH = Math.max(10, H - hDed);
+      const sW = Math.max(10, Math.round((W + wAdd) / 2));
+
+      res = {
+        sashHeight: sH,
+        sashWidth: sW,
+        sashHeightPieces: 6,
+        sashWidthPieces: 6,
+        interlock: Math.max(0, sH - 5),
+        mullion: null,
+        mullionPieces: null,
+        glassHeight: Math.max(10, sH - gDed),
+        glassWidth: Math.max(10, sW - gDed),
+        glassPieces: 3,
+        meshHeight: sH,
+        meshWidth: sW,
       };
       break;
     }
