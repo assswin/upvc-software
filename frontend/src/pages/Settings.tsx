@@ -401,6 +401,9 @@ export default function Settings({ language }: SettingsProps) {
   const [saveStatus, setSaveStatus] = useState<string>('')
   const [isSyncing, setIsSyncing] = useState(false)
   const syncTimerRef = useRef<number | null>(null)
+  const latestFormulasRef = useRef(customFormulas)
+  const hasPendingSyncRef = useRef(false)
+  latestFormulasRef.current = customFormulas
 
   const activePreset = FORMULA_PRESETS[selectedModel]
   const activeOverrides = customFormulas[selectedModel] || {}
@@ -456,15 +459,22 @@ export default function Settings({ language }: SettingsProps) {
       cancelled = true
       if (syncTimerRef.current !== null) {
         window.clearTimeout(syncTimerRef.current)
+        syncTimerRef.current = null
+      }
+      if (hasPendingSyncRef.current) {
+        hasPendingSyncRef.current = false
+        void syncFormulasToBackend(latestFormulasRef.current)
       }
     }
   }, [])
 
   const scheduleBackendSync = (nextFormulas: Record<string, CustomDeductionOverrides>) => {
+    hasPendingSyncRef.current = true
     if (syncTimerRef.current !== null) {
       window.clearTimeout(syncTimerRef.current)
     }
     syncTimerRef.current = window.setTimeout(() => {
+      hasPendingSyncRef.current = false
       void syncFormulasToBackend(nextFormulas)
     }, 600)
   }
@@ -497,6 +507,7 @@ export default function Settings({ language }: SettingsProps) {
   }
 
   const saveFormulasNow = async () => {
+    hasPendingSyncRef.current = false
     if (syncTimerRef.current !== null) {
       window.clearTimeout(syncTimerRef.current)
       syncTimerRef.current = null

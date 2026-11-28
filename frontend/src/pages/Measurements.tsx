@@ -1210,7 +1210,11 @@ function Measurements({
   }
 
   const showMeshColumn = rows.some(
-    (row) => row.modelId === '58-2.5' || row.modelId === '85-2.5'
+    (row) =>
+      row.modelId === '58-2.5' ||
+      row.modelId === '66-2.5' ||
+      row.modelId === '85-2.5' ||
+      row.modelId === '85-3-mesh'
   )
 
   const showMullionColumn = rows.some(
