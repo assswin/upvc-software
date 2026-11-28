@@ -180,7 +180,21 @@ export default function Drawings({
   const selectedCustomerIdRef = useRef('')
   const initialProjectResolvedRef = useRef(false)
   const [records, setRecords] = useState<DrawingRecord[]>([])
-  const [customFormulas] = useState(loadSavedFormulas)
+  const [customFormulas, setCustomFormulas] = useState(loadSavedFormulas)
+
+  useEffect(() => {
+    const syncFormulas = () => {
+      setCustomFormulas(loadSavedFormulas())
+    }
+    window.addEventListener('storage', syncFormulas)
+    window.addEventListener('focus', syncFormulas)
+    window.addEventListener('ls-formulas-updated', syncFormulas)
+    return () => {
+      window.removeEventListener('storage', syncFormulas)
+      window.removeEventListener('focus', syncFormulas)
+      window.removeEventListener('ls-formulas-updated', syncFormulas)
+    }
+  }, [])
   const [loadingCustomers, setLoadingCustomers] = useState(true)
   const [loadingRecords, setLoadingRecords] = useState(false)
   const [customerError, setCustomerError] = useState('')

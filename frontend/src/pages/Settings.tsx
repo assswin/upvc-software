@@ -26,6 +26,9 @@ type ModelFormulaPreset = {
   defaultMullionDeduction?: number
   hasMesh?: boolean
   defaultMeshDeduction?: number
+  defaultMeshWidthDeduction?: number
+  meshWidthType?: 'deduction' | 'addition'
+  meshWidthLabel?: string
   formulaDescription: string
 }
 
@@ -57,8 +60,11 @@ const FORMULA_PRESETS: Record<WindowModelId, ModelFormulaPreset> = {
     glassDeduction: 94,
     hasMesh: true,
     defaultMeshDeduction: 10,
+    defaultMeshWidthDeduction: 10,
+    meshWidthType: 'deduction',
+    meshWidthLabel: 'Mesh Width Deduction ((W - X)/2)',
     formulaDescription:
-      'Sash H: H-82 | Sash W: (W-10)/2 | Glass: Shutter-94 | Mesh H: H-10, Mesh W: (W-10)/2',
+      'Sash H: H-82 | Sash W: (W-10)/2 | Glass: Shutter-94 | Mesh H: H-10 | Mesh W: (W-10)/2',
   },
   '58-3': {
     name: '58mm 3 Track Sliding Window',
@@ -102,6 +108,25 @@ const FORMULA_PRESETS: Record<WindowModelId, ModelFormulaPreset> = {
     formulaDescription:
       'Sash H: H-94 | Sash W: (W-22)/2 | Glass: Shutter-112 (H-206, (W-22)/2-112) | Interlock: Sash H-5',
   },
+  '66-2.5': {
+    name: '66mm 2.5 Track Sliding with Mesh',
+    tamilName: '2.5 டிராக் கொசுவலை (66mm)',
+    category: 'sliding',
+    material: '66 mm',
+    heightDeduction: 94,
+    widthType: 'deduction',
+    widthLabel: 'Width Deduction ((W - X)/2)',
+    widthValue: 22,
+    glassReference: 'shutter',
+    glassDeduction: 112,
+    hasMesh: true,
+    defaultMeshDeduction: 10,
+    defaultMeshWidthDeduction: 22,
+    meshWidthType: 'deduction',
+    meshWidthLabel: 'Mesh Width Deduction ((W - X)/2)',
+    formulaDescription:
+      'Sash H: H-94 | Sash W: (W-22)/2 | Glass: Shutter-112 | Mesh H: H-10 | Mesh W: (W-22)/2',
+  },
   '66-3': {
     name: '66mm 3 Track Sliding Window',
     tamilName: '3 டிராக் ஸ்லைடிங் (66mm)',
@@ -143,8 +168,11 @@ const FORMULA_PRESETS: Record<WindowModelId, ModelFormulaPreset> = {
     glassDeduction: 152,
     hasMesh: true,
     defaultMeshDeduction: 0,
+    defaultMeshWidthDeduction: 12,
+    meshWidthType: 'addition',
+    meshWidthLabel: 'Mesh Width Overlap Addition ((W + X)/2)',
     formulaDescription:
-      'Sash H: H-82 | Sash W: (W+12)/2 | Glass: Shutter-152 | Mesh: Same H & W as Sash',
+      'Sash H: H-82 | Sash W: (W+12)/2 | Glass: Shutter-152 | Mesh: Same H & W as Sash (or custom)',
   },
   '85-3': {
     name: '85mm 3 Track Heavy Sliding Door',
@@ -371,6 +399,15 @@ export default function Settings({ language }: SettingsProps) {
   const activePreset = FORMULA_PRESETS[selectedModel]
   const activeOverrides = customFormulas[selectedModel] || {}
 
+  const persistFormulas = (nextFormulas: Record<string, CustomDeductionOverrides>) => {
+    try {
+      localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(nextFormulas))
+      window.dispatchEvent(new CustomEvent('ls-formulas-updated'))
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   const updateOverride = (
     field: keyof CustomDeductionOverrides,
     value: number | undefined
@@ -385,26 +422,28 @@ export default function Settings({ language }: SettingsProps) {
         ...prev,
         [selectedModel]: updatedOverrides,
       }
-      try {
-        localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(updatedAll))
-      } catch (e) {
-        console.error(e)
-      }
+      persistFormulas(updatedAll)
       return updatedAll
     })
     setSaveStatus('Auto-saved!')
     setTimeout(() => setSaveStatus(''), 2000)
   }
 
+  const saveFormulasNow = () => {
+    persistFormulas(customFormulas)
+    setSaveStatus(
+      language === 'en'
+        ? 'Formula Settings Saved!'
+        : 'ஃபார்முலா அமைப்புகள் சேமிக்கப்பட்டன!'
+    )
+    setTimeout(() => setSaveStatus(''), 2500)
+  }
+
   const resetCurrentModel = () => {
     setCustomFormulas((prev) => {
       const updated = { ...prev }
       delete updated[selectedModel]
-      try {
-        localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(updated))
-      } catch (e) {
-        console.error(e)
-      }
+      persistFormulas(updated)
       return updated
     })
     setSaveStatus('Reset to workshop defaults')
@@ -422,6 +461,7 @@ export default function Settings({ language }: SettingsProps) {
     setCustomFormulas({})
     try {
       localStorage.removeItem(FORMULAS_STORAGE_KEY)
+      window.dispatchEvent(new CustomEvent('ls-formulas-updated'))
     } catch (e) {
       console.error(e)
     }
@@ -723,29 +763,85 @@ export default function Settings({ language }: SettingsProps) {
               </div>
             )}
 
-            {/* Mosquito Mesh Deduction (for mesh models) */}
+            {/* Mosquito Mesh Height & Specific Width Settings (for all 2.5 track mm) */}
             {activePreset.hasMesh && (
-              <div className="settings-field">
-                <label>
-                  {language === 'en'
-                    ? 'Mosquito Mesh Deduction (mm)'
-                    : 'கொசுவலை கழித்தல் (mm)'}
-                </label>
-                <input
-                  type="number"
-                  placeholder={`Default: ${activePreset.defaultMeshDeduction ?? 0} mm`}
-                  value={activeOverrides.meshDeductionMM ?? ''}
-                  onChange={(e) =>
-                    updateOverride(
-                      'meshDeductionMM',
-                      e.target.value === '' ? undefined : Number(e.target.value)
-                    )
-                  }
-                />
-                <span className="settings-field-note">
-                  Mesh Height = H - {activeOverrides.meshDeductionMM ?? activePreset.defaultMeshDeduction ?? 0} mm
-                </span>
-              </div>
+              <>
+                <div className="settings-field">
+                  <label>
+                    {language === 'en'
+                      ? 'Mosquito Mesh Height Deduction (mm)'
+                      : 'கொசுவலை உயரம் கழித்தல் (mm)'}
+                  </label>
+                  <input
+                    type="number"
+                    placeholder={`Default: ${activePreset.defaultMeshDeduction ?? 0} mm`}
+                    value={
+                      activeOverrides.meshHeightDeductionMM ??
+                      activeOverrides.meshDeductionMM ??
+                      ''
+                    }
+                    onChange={(e) =>
+                      updateOverride(
+                        'meshHeightDeductionMM',
+                        e.target.value === '' ? undefined : Number(e.target.value)
+                      )
+                    }
+                  />
+                  <span className="settings-field-note">
+                    {selectedModel === '85-2.5' &&
+                    activeOverrides.meshHeightDeductionMM === undefined &&
+                    activeOverrides.meshDeductionMM === undefined
+                      ? 'Mesh Height = Same as Sash Height (or enter H - X mm)'
+                      : `Mesh Height = Outer Frame H - ${
+                          activeOverrides.meshHeightDeductionMM ??
+                          activeOverrides.meshDeductionMM ??
+                          activePreset.defaultMeshDeduction ??
+                          0
+                        } mm`}
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label>
+                    {language === 'en'
+                      ? activePreset.meshWidthLabel || 'Mosquito Mesh Width Setting (mm)'
+                      : 'கொசுவலை அகலம் அமைப்பு (mm)'}
+                  </label>
+                  <input
+                    type="number"
+                    placeholder={`Default: ${
+                      activePreset.defaultMeshWidthDeduction ?? activePreset.widthValue
+                    } mm`}
+                    value={
+                      activePreset.meshWidthType === 'addition'
+                        ? activeOverrides.meshWidthAdditionMM ?? ''
+                        : activeOverrides.meshWidthDeductionMM ?? ''
+                    }
+                    onChange={(e) => {
+                      const val =
+                        e.target.value === '' ? undefined : Number(e.target.value)
+                      if (activePreset.meshWidthType === 'addition') {
+                        updateOverride('meshWidthAdditionMM', val)
+                      } else {
+                        updateOverride('meshWidthDeductionMM', val)
+                      }
+                    }}
+                  />
+                  <span className="settings-field-note">
+                    {activePreset.meshWidthType === 'addition'
+                      ? `Mesh Width = (W + ${
+                          activeOverrides.meshWidthAdditionMM ??
+                          activePreset.defaultMeshWidthDeduction ??
+                          activePreset.widthValue
+                        }) / 2 mm`
+                      : `Mesh Width = (W - ${
+                          activeOverrides.meshWidthDeductionMM ??
+                          activePreset.defaultMeshWidthDeduction ??
+                          activePreset.widthValue
+                        }) / 2 mm`}
+                  </span>
+                </div>
+              </>
             )}
           </div>
 
@@ -817,7 +913,26 @@ export default function Settings({ language }: SettingsProps) {
 
           {/* Action buttons */}
           <div className="settings-actions">
-            <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={saveFormulasNow}
+                style={{
+                  background: '#16a34a',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '9px 16px',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {language === 'en'
+                  ? '💾 Save Formula Settings'
+                  : '💾 ஃபார்முலாவை சேமி'}
+              </button>
+
               <button
                 type="button"
                 className="settings-btn-reset-model"

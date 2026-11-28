@@ -13,6 +13,7 @@ export const MODEL_DEFAULT_COLORS: Record<string, string> = {
 
   // 66mm Sliding Windows (Cyan family)
   '66-2': '#A5F3FC', // Soft Cyan
+  '66-2.5': '#38BDF8', // Sky Blue
   '66-3': '#67E8F9', // Light Cyan
 
   // 85mm Heavy Sliding Doors (Teal family)

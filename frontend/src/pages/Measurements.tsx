@@ -368,10 +368,12 @@ function Measurements({
 
     window.addEventListener('storage', syncFormulas)
     window.addEventListener('focus', syncFormulas)
+    window.addEventListener('ls-formulas-updated', syncFormulas)
 
     return () => {
       window.removeEventListener('storage', syncFormulas)
       window.removeEventListener('focus', syncFormulas)
+      window.removeEventListener('ls-formulas-updated', syncFormulas)
     }
   }, [])
 

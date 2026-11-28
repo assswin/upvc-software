@@ -242,7 +242,7 @@ export const WindowVisualizer2D: React.FC<WindowVisualizer2DProps> = ({
     const isFixed = category === 'fixed';
     const isVentilator = category === 'ventilator';
     const isMeshWindow =
-      resModelId === '58-2.5' || resModelId === '85-2.5' || resModelDef.name.includes('Mesh') || resModelDef.name.includes('MESH');
+      resModelId === '58-2.5' || resModelId === '66-2.5' || resModelId === '85-2.5' || resModelDef.name.includes('Mesh') || resModelDef.name.includes('MESH');
 
     // View bounding logic
     const isAllInOne = cadView === 'all_in_one';
