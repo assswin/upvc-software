@@ -36,7 +36,6 @@ type WorkshopColumnKey =
   | 'sNo'
   | 'siteDim'
   | 'outerFrame'
-  | 'modelName'
   | 'type'
   | 'material'
   | 'sashH'
@@ -142,8 +141,7 @@ export function generateWorkshopOrderPDF(
     { key: 'sNo', header: 'Si.No.', width: 10 },
     { key: 'siteDim', header: 'Height x Width', subHeader: 'Inches', width: 23 },
     { key: 'outerFrame', header: 'Outer Frame', subHeader: 'H x W (mm)', width: 22 },
-    { key: 'modelName', header: 'Model Name', width: 30 },
-    { key: 'type', header: 'Type', width: 24 },
+    { key: 'type', header: 'Model Type', width: 24 },
     { key: 'material', header: 'Material', subHeader: '(mm)', width: 12 },
 
     { key: 'sashH', header: 'H', width: 13, group: 'Sash Cut (mm)' },
@@ -497,7 +495,6 @@ export function generateWorkshopOrderPDF(
           item.convertedWidthMM / 25.4
         ).toFixed(2);
 
-        const modelName = cleanAscii(modelDef?.name || item.ruleProfileName || '');
         const modelType = cleanAscii(modelDef?.shortCode || item.input.modelId || '');
         const material = cleanAscii(
           modelDef?.material || `${item.frame.profileDepthMM} mm`
@@ -518,7 +515,6 @@ export function generateWorkshopOrderPDF(
           true
         );
 
-        cellText('modelName', modelName, 6.2, true);
         cellText('type', modelType, 6.5, true);
         cellText('material', material, 6.5);
 

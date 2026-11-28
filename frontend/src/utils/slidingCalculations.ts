@@ -1,42 +1,34 @@
+
 // LS Interiors Comprehensive Window & Door Calculation Engine
 // Based on Tamil Nadu Workshop Audited Standards (Method of Sum)
 // Fully logical cutting & deduction system with profile-specific glass references
 
 export type WindowModelId =
-  // 58mm Sliding Series
   | "58-2"
   | "58-2.5"
   | "58-3"
   | "58-4"
-  // 66mm Sliding Series
   | "66-2"
   | "66-3"
-  // 85mm Heavy Sliding Door Series
   | "85-2"
   | "85-2.5"
   | "85-3"
-  // Casement / Open Window Series (60mm / No Track)
   | "open-single"
   | "open-double"
   | "open-triple"
-  // 108mm Heavy Open Door Series
   | "door-with-bottom"
   | "door-without-bottom"
   | "double-door-with-bottom"
   | "double-door-without-bottom"
-  // Fixed & Ventilator Series
   | "fixed"
   | "ventilator-normal"
   | "ventilator-fan"
   | "ventilator-fan-left"
   | "ventilator-fan-right";
 
-export type SlidingModelId = WindowModelId; // Backward-compatible alias
-
+export type SlidingModelId = WindowModelId;
 export type MeasurementUnit = "inches" | "cm" | "mm";
-
 export type WindowCategory = "sliding" | "open" | "door" | "fixed" | "ventilator";
-
 export type GlassReferenceType = "shutter" | "frame" | "none";
 
 export interface WindowModelDefinition {
@@ -50,7 +42,6 @@ export interface WindowModelDefinition {
 }
 
 export const WINDOW_MODELS: WindowModelDefinition[] = [
-  // 58mm Sliding Windows (Glass = Shutter - 94mm / -95mm)
   {
     id: "58-2",
     name: "2 Track Sliding Window – 58 mm",
@@ -87,7 +78,6 @@ export const WINDOW_MODELS: WindowModelDefinition[] = [
     glassReference: "shutter",
     defaultGlassDeductionMM: 95,
   },
-  // 66mm Sliding Windows (Glass = Shutter - 112mm)
   {
     id: "66-2",
     name: "2 Track Sliding Window – 66 mm",
@@ -106,7 +96,6 @@ export const WINDOW_MODELS: WindowModelDefinition[] = [
     glassReference: "shutter",
     defaultGlassDeductionMM: 112,
   },
-  // 85mm Heavy Sliding Doors (Glass = Shutter - 152mm)
   {
     id: "85-2",
     name: "2 Track Sliding Door – 85 mm",
@@ -134,7 +123,6 @@ export const WINDOW_MODELS: WindowModelDefinition[] = [
     glassReference: "shutter",
     defaultGlassDeductionMM: 152,
   },
-  // 60mm Casement / Open Windows (Glass = Shutter - 124mm / -126mm / -125mm)
   {
     id: "open-single",
     name: "Single Open Casement Window",
@@ -162,7 +150,6 @@ export const WINDOW_MODELS: WindowModelDefinition[] = [
     glassReference: "shutter",
     defaultGlassDeductionMM: 125,
   },
-  // 108mm Heavy Open Doors (No Glass Cut - Solid / PVC Panel Door)
   {
     id: "door-with-bottom",
     name: "Single Open Door with Bottom – 108 mm",
@@ -199,7 +186,6 @@ export const WINDOW_MODELS: WindowModelDefinition[] = [
     glassReference: "none",
     defaultGlassDeductionMM: 0,
   },
-  // Fixed Window (Direct Outer Frame Glazing: Glass = Outer Frame - 96mm)
   {
     id: "fixed",
     name: "Fixed Window (Direct Glazing)",
@@ -209,7 +195,6 @@ export const WINDOW_MODELS: WindowModelDefinition[] = [
     glassReference: "frame",
     defaultGlassDeductionMM: 96,
   },
-  // Ventilators (Outer Frame Only - No Glass Cut, Direct Inch to MM)
   {
     id: "ventilator-normal",
     name: "Ventilator (Standard Louver)",
@@ -253,7 +238,7 @@ export interface CustomDeductionOverrides {
   widthDeductionMM?: number;
   widthAdditionMM?: number;
   glassDeductionMM?: number;
-  mirrorDeductionMM?: number; // Backward-compatible alias
+  mirrorDeductionMM?: number;
   mullionDeductionMM?: number;
   meshDeductionMM?: number;
 }
@@ -304,7 +289,6 @@ export function convertToMm(value: number, unit: MeasurementUnit): number {
       const whole = Math.floor(value);
       const frac = Math.round((value - whole) * 1000) / 1000;
 
-      // Odd eighths: add 3.5mm extra margin
       if (Math.abs(frac - 0.125) < 0.001) {
         return Math.round(whole * 25.4 + 3.5);
       }
@@ -314,11 +298,13 @@ export function convertToMm(value: number, unit: MeasurementUnit): number {
       if (Math.abs(frac - 0.625) < 0.001) {
         return Math.round((whole + 0.5) * 25.4 + 3.5);
       }
-      if (Math.abs(frac - 0.7875) < 0.001 || Math.abs(frac - 0.875) < 0.001) {
+      if (
+        Math.abs(frac - 0.7875) < 0.001 ||
+        Math.abs(frac - 0.875) < 0.001
+      ) {
         return Math.round((whole + 0.75) * 25.4 + 3.5);
       }
 
-      // Standard fraction decimals (1/4, 1/2, 3/4) and whole inches
       return Math.round(value * 25.4);
     }
     case "cm":
@@ -350,54 +336,52 @@ export function calculateSlidingWindow(
   const originalHeightMm = convertToMm(height, unit);
   const originalWidthMm = convertToMm(width, unit);
 
-  // Normalize modelId to safely handle empty inputs, legacy database values, and aliases
-  const rawModelId = typeof modelId === 'string' ? modelId.trim() : '';
+  const rawModelId = typeof modelId === "string" ? modelId.trim() : "";
   let normalizedModelId = rawModelId;
-  if (normalizedModelId === 'ventilator-fan') {
-    normalizedModelId = 'ventilator-fan-left';
+
+  if (normalizedModelId === "ventilator-fan") {
+    normalizedModelId = "ventilator-fan-left";
   } else if (
-    normalizedModelId === 'open-door' ||
-    normalizedModelId === 'door' ||
-    normalizedModelId === 'open-door-with-bottom'
+    normalizedModelId === "open-door" ||
+    normalizedModelId === "door" ||
+    normalizedModelId === "open-door-with-bottom"
   ) {
-    normalizedModelId = 'door-with-bottom';
-  } else if (normalizedModelId === 'open-door-without-bottom') {
-    normalizedModelId = 'door-without-bottom';
+    normalizedModelId = "door-with-bottom";
+  } else if (normalizedModelId === "open-door-without-bottom") {
+    normalizedModelId = "door-without-bottom";
   }
 
   const modelDef =
     WINDOW_MODELS.find((m) => m.id === normalizedModelId) || WINDOW_MODELS[0];
-  const effectiveModelId = (WINDOW_MODELS.some((m) => m.id === normalizedModelId)
-    ? normalizedModelId
-    : modelDef.id) as WindowModelId;
 
-  const isVentilator =
-    modelDef.category === "ventilator" ||
-    effectiveModelId === "ventilator-normal" ||
-    effectiveModelId === "ventilator-fan" ||
-    effectiveModelId === "ventilator-fan-left" ||
-    effectiveModelId === "ventilator-fan-right";
+  const effectiveModelId = (
+    WINDOW_MODELS.some((m) => m.id === normalizedModelId)
+      ? normalizedModelId
+      : modelDef.id
+  ) as WindowModelId;
 
-  // Added MM (tolerance / workshop offset): ALWAYS positive added value (+ toleranceMm), 0 for ventilators (per workshop standard)
-  const allowance = isVentilator ? 0 : (applyTolerance ? Math.abs(toleranceMm) : 0);
+  // Apply the configured tolerance to every model, including ventilators.
+  const allowance = applyTolerance ? Math.abs(toleranceMm) : 0;
 
-  // If convertToMm already incorporated odd eighths (+3.5 mm), avoid double-adding
   const fracH = Math.round((height - Math.floor(height)) * 1000) / 1000;
   const isOddEighthH =
     unit === "inches" &&
-    [0.125, 0.375, 0.625, 0.875].some((f) => Math.abs(fracH - f) < 0.001);
+    [0.125, 0.375, 0.625, 0.875].some(
+      (f) => Math.abs(fracH - f) < 0.001
+    );
   const extraH = isOddEighthH ? 0 : heightAdditionalMm;
 
   const fracW = Math.round((width - Math.floor(width)) * 1000) / 1000;
   const isOddEighthW =
     unit === "inches" &&
-    [0.125, 0.375, 0.625, 0.875].some((f) => Math.abs(fracW - f) < 0.001);
+    [0.125, 0.375, 0.625, 0.875].some(
+      (f) => Math.abs(fracW - f) < 0.001
+    );
   const extraW = isOddEighthW ? 0 : widthAdditionalMm;
 
   const H = Math.round(originalHeightMm + allowance + extraH);
   const W = Math.round(originalWidthMm + allowance + extraW);
 
-  // Helper to resolve glass deduction override
   const getGlassDeduction = (defaultVal: number) => {
     if (customOverrides.glassDeductionMM !== undefined) {
       return customOverrides.glassDeductionMM;
@@ -420,9 +404,6 @@ export function calculateSlidingWindow(
   >;
 
   switch (effectiveModelId) {
-    // ----------------------------------------------------
-    // 58mm Sliding Series
-    // ----------------------------------------------------
     case "58-2": {
       const hDed = customOverrides.heightDeductionMM ?? 94;
       const wDed = customOverrides.widthDeductionMM ?? 11;
@@ -524,9 +505,6 @@ export function calculateSlidingWindow(
       break;
     }
 
-    // ----------------------------------------------------
-    // 66mm Sliding Series
-    // ----------------------------------------------------
     case "66-2": {
       const hDed = customOverrides.heightDeductionMM ?? 94;
       const wDed = customOverrides.widthDeductionMM ?? 22;
@@ -577,9 +555,6 @@ export function calculateSlidingWindow(
       break;
     }
 
-    // ----------------------------------------------------
-    // 85mm Heavy Sliding Door Series
-    // ----------------------------------------------------
     case "85-2": {
       const hDed = customOverrides.heightDeductionMM ?? 94;
       const wDed = customOverrides.widthDeductionMM ?? 2;
@@ -624,7 +599,7 @@ export function calculateSlidingWindow(
         glassHeight: Math.max(10, sH - gDed),
         glassWidth: Math.max(10, sW - gDed),
         glassPieces: 2,
-        meshHeight: sH, // In 85mm door, mesh has exact same H & W as sash
+        meshHeight: sH,
         meshWidth: sW,
       };
       break;
@@ -657,9 +632,6 @@ export function calculateSlidingWindow(
       break;
     }
 
-    // ----------------------------------------------------
-    // 60mm Casement / Open Windows
-    // ----------------------------------------------------
     case "open-single": {
       const hDed = customOverrides.heightDeductionMM ?? 64;
       const wDed = customOverrides.widthDeductionMM ?? 64;
@@ -696,7 +668,7 @@ export function calculateSlidingWindow(
         sashHeightPieces: 4,
         sashWidthPieces: 4,
         interlock: null,
-        mullion: Math.max(10, H - mDed), // Mullion is cut from Outer Frame H - 6mm
+        mullion: Math.max(10, H - mDed),
         mullionPieces: 1,
         glassHeight: Math.max(10, sH - gDed),
         glassWidth: Math.max(10, sW - gDed),
@@ -720,7 +692,7 @@ export function calculateSlidingWindow(
         sashHeightPieces: 6,
         sashWidthPieces: 6,
         interlock: null,
-        mullion: Math.max(10, H - mDed), // 2 Mullions cut from Outer Frame H - 6mm
+        mullion: Math.max(10, H - mDed),
         mullionPieces: 2,
         glassHeight: Math.max(10, sH - gDed),
         glassWidth: Math.max(10, sW - gDed),
@@ -731,9 +703,6 @@ export function calculateSlidingWindow(
       break;
     }
 
-    // ----------------------------------------------------
-    // 108mm Open Doors (Solid / Panel Door - No Glass Cut)
-    // ----------------------------------------------------
     case "door-with-bottom": {
       const hDed = customOverrides.heightDeductionMM ?? 63;
       const wDed = customOverrides.widthDeductionMM ?? 63;
@@ -822,9 +791,6 @@ export function calculateSlidingWindow(
       break;
     }
 
-    // ----------------------------------------------------
-    // Fixed Window (Direct Outer Frame Glazing)
-    // ----------------------------------------------------
     case "fixed": {
       const gDed = getGlassDeduction(96);
       res = {
@@ -844,9 +810,6 @@ export function calculateSlidingWindow(
       break;
     }
 
-    // ----------------------------------------------------
-    // Ventilators (Outer Frame Only - No Glass Cut)
-    // ----------------------------------------------------
     case "ventilator-normal":
     case "ventilator-fan":
     case "ventilator-fan-left":
@@ -869,7 +832,6 @@ export function calculateSlidingWindow(
     }
 
     default: {
-      // Robust workshop fallback: default to standard 2-track sliding window deductions
       const hDed = customOverrides.heightDeductionMM ?? 94;
       const wDed = customOverrides.widthDeductionMM ?? 11;
       const gDed = getGlassDeduction(94);
