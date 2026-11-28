@@ -1,6 +1,7 @@
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Language } from '../components/Sidebar'
+import { apiUrl, authFetch } from '../utils/api'
 import {
   calculateSlidingWindow,
   WINDOW_MODELS,
@@ -398,11 +399,13 @@ export default function Settings({ language }: SettingsProps) {
     }
   })
   const [saveStatus, setSaveStatus] = useState<string>('')
+  const [isSyncing, setIsSyncing] = useState(false)
+  const syncTimerRef = useRef<number | null>(null)
 
   const activePreset = FORMULA_PRESETS[selectedModel]
   const activeOverrides = customFormulas[selectedModel] || {}
 
-  const persistFormulas = (nextFormulas: Record<string, CustomDeductionOverrides>) => {
+  const persistFormulasLocal = (nextFormulas: Record<string, CustomDeductionOverrides>) => {
     try {
       localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(nextFormulas))
       window.dispatchEvent(new CustomEvent('ls-formulas-updated'))
@@ -411,33 +414,105 @@ export default function Settings({ language }: SettingsProps) {
     }
   }
 
+  const syncFormulasToBackend = async (
+    nextFormulas: Record<string, CustomDeductionOverrides>
+  ): Promise<boolean> => {
+    try {
+      const response = await authFetch(apiUrl('/settings/formulas'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ formulas: nextFormulas }),
+      })
+      return response.ok
+    } catch (e) {
+      console.error('Failed to sync formulas to server:', e)
+      return false
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    const loadFromBackend = async () => {
+      try {
+        const response = await authFetch(apiUrl('/settings/formulas'))
+        if (!response.ok || cancelled) return
+        const data: { formulas?: Record<string, CustomDeductionOverrides> } =
+          await response.json()
+        if (
+          !cancelled &&
+          data?.formulas &&
+          typeof data.formulas === 'object' &&
+          Object.keys(data.formulas).length > 0
+        ) {
+          setCustomFormulas(data.formulas)
+          persistFormulasLocal(data.formulas)
+        }
+      } catch (e) {
+        console.error('Failed to load formulas from server:', e)
+      }
+    }
+    void loadFromBackend()
+    return () => {
+      cancelled = true
+      if (syncTimerRef.current !== null) {
+        window.clearTimeout(syncTimerRef.current)
+      }
+    }
+  }, [])
+
+  const scheduleBackendSync = (nextFormulas: Record<string, CustomDeductionOverrides>) => {
+    if (syncTimerRef.current !== null) {
+      window.clearTimeout(syncTimerRef.current)
+    }
+    syncTimerRef.current = window.setTimeout(() => {
+      void syncFormulasToBackend(nextFormulas)
+    }, 600)
+  }
+
   const updateOverride = (
     field: keyof CustomDeductionOverrides,
     value: number | undefined
   ) => {
     setCustomFormulas((prev) => {
       const current = prev[selectedModel] || {}
-      const updatedOverrides = {
+      const updatedOverrides: CustomDeductionOverrides = {
         ...current,
         [field]: value,
+      }
+      if (field === 'meshWidthAdditionMM') {
+        delete updatedOverrides.meshWidthDeductionMM
+      } else if (field === 'meshWidthDeductionMM') {
+        delete updatedOverrides.meshWidthAdditionMM
       }
       const updatedAll = {
         ...prev,
         [selectedModel]: updatedOverrides,
       }
-      persistFormulas(updatedAll)
+      persistFormulasLocal(updatedAll)
+      scheduleBackendSync(updatedAll)
       return updatedAll
     })
     setSaveStatus('Auto-saved!')
     setTimeout(() => setSaveStatus(''), 2000)
   }
 
-  const saveFormulasNow = () => {
-    persistFormulas(customFormulas)
+  const saveFormulasNow = async () => {
+    if (syncTimerRef.current !== null) {
+      window.clearTimeout(syncTimerRef.current)
+      syncTimerRef.current = null
+    }
+    setIsSyncing(true)
+    persistFormulasLocal(customFormulas)
+    const ok = await syncFormulasToBackend(customFormulas)
+    setIsSyncing(false)
     setSaveStatus(
-      language === 'en'
-        ? 'Formula Settings Saved!'
-        : 'ஃபார்முலா அமைப்புகள் சேமிக்கப்பட்டன!'
+      ok
+        ? language === 'en'
+          ? 'Formula Settings Saved & Synced!'
+          : 'ஃபார்முலா அமைப்புகள் சேமிக்கப்பட்டன!'
+        : language === 'en'
+          ? 'Saved locally (server sync failed)'
+          : 'உள்ளூரில் சேமிக்கப்பட்டது'
     )
     setTimeout(() => setSaveStatus(''), 2500)
   }
@@ -446,7 +521,8 @@ export default function Settings({ language }: SettingsProps) {
     setCustomFormulas((prev) => {
       const updated = { ...prev }
       delete updated[selectedModel]
-      persistFormulas(updated)
+      persistFormulasLocal(updated)
+      void syncFormulasToBackend(updated)
       return updated
     })
     setSaveStatus('Reset to workshop defaults')
@@ -465,6 +541,7 @@ export default function Settings({ language }: SettingsProps) {
     try {
       localStorage.removeItem(FORMULAS_STORAGE_KEY)
       window.dispatchEvent(new CustomEvent('ls-formulas-updated'))
+      void syncFormulasToBackend({})
     } catch (e) {
       console.error(e)
     }
@@ -919,21 +996,26 @@ export default function Settings({ language }: SettingsProps) {
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
               <button
                 type="button"
-                onClick={saveFormulasNow}
+                onClick={() => void saveFormulasNow()}
+                disabled={isSyncing}
                 style={{
-                  background: '#16a34a',
+                  background: isSyncing ? '#9ca3af' : '#16a34a',
                   color: '#ffffff',
                   border: 'none',
                   padding: '9px 16px',
                   borderRadius: '6px',
                   fontSize: '13px',
                   fontWeight: 700,
-                  cursor: 'pointer',
+                  cursor: isSyncing ? 'not-allowed' : 'pointer',
                 }}
               >
-                {language === 'en'
-                  ? '💾 Save Formula Settings'
-                  : '💾 ஃபார்முலாவை சேமி'}
+                {isSyncing
+                  ? language === 'en'
+                    ? '⏳ Saving...'
+                    : '⏳ சேமிக்கிறது...'
+                  : language === 'en'
+                    ? '💾 Save Formula Settings'
+                    : '💾 ஃபார்முலாவை சேமி'}
               </button>
 
               <button

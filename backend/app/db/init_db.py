@@ -11,7 +11,7 @@ def init_db():
     if engine.dialect.name == "postgresql":
         with engine.connect() as conn:
             exists = conn.execute(
-                text("SELECT to_regclass('public.passcode_sessions')")
+                text("SELECT to_regclass('public.shop_settings')")
             ).scalar()
             if exists is not None:
                 return

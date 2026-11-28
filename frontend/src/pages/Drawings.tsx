@@ -183,13 +183,36 @@ export default function Drawings({
   const [customFormulas, setCustomFormulas] = useState(loadSavedFormulas)
 
   useEffect(() => {
+    let cancelled = false
     const syncFormulas = () => {
       setCustomFormulas(loadSavedFormulas())
     }
+    const fetchBackendFormulas = async () => {
+      try {
+        const response = await authFetch(apiUrl('/settings/formulas'))
+        if (!response.ok || cancelled) return
+        const data: { formulas?: Record<string, CustomDeductionOverrides> } =
+          await response.json()
+        if (
+          !cancelled &&
+          data?.formulas &&
+          typeof data.formulas === 'object' &&
+          Object.keys(data.formulas).length > 0
+        ) {
+          localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(data.formulas))
+          setCustomFormulas(data.formulas)
+        }
+      } catch {
+        // Ignore network errors and keep localStorage fallback.
+      }
+    }
+    void fetchBackendFormulas()
+
     window.addEventListener('storage', syncFormulas)
     window.addEventListener('focus', syncFormulas)
     window.addEventListener('ls-formulas-updated', syncFormulas)
     return () => {
+      cancelled = true
       window.removeEventListener('storage', syncFormulas)
       window.removeEventListener('focus', syncFormulas)
       window.removeEventListener('ls-formulas-updated', syncFormulas)

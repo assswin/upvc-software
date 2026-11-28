@@ -352,6 +352,9 @@ function Measurements({
     initialProjectId || null
   )
   const [isSaving, setIsSaving] = useState(false)
+  const [isLoadingProject, setIsLoadingProject] = useState(
+    Boolean(initialProjectId || selectedCustomer?.id)
+  )
 
   const currentOrder = useMemo(
     () => savedOrders.find((order) => order.id === currentOrderId),
@@ -362,15 +365,37 @@ function Measurements({
     useState<Record<string, CustomDeductionOverrides>>(loadCustomFormulas)
 
   useEffect(() => {
+    let cancelled = false
     const syncFormulas = () => {
       setCustomFormulas(loadCustomFormulas())
     }
+    const fetchBackendFormulas = async () => {
+      try {
+        const response = await authFetch(apiUrl('/settings/formulas'))
+        if (!response.ok || cancelled) return
+        const data: { formulas?: Record<string, CustomDeductionOverrides> } =
+          await response.json()
+        if (
+          !cancelled &&
+          data?.formulas &&
+          typeof data.formulas === 'object' &&
+          Object.keys(data.formulas).length > 0
+        ) {
+          localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(data.formulas))
+          setCustomFormulas(data.formulas)
+        }
+      } catch {
+        // Ignore network errors and keep localStorage fallback.
+      }
+    }
+    void fetchBackendFormulas()
 
     window.addEventListener('storage', syncFormulas)
     window.addEventListener('focus', syncFormulas)
     window.addEventListener('ls-formulas-updated', syncFormulas)
 
     return () => {
+      cancelled = true
       window.removeEventListener('storage', syncFormulas)
       window.removeEventListener('focus', syncFormulas)
       window.removeEventListener('ls-formulas-updated', syncFormulas)
@@ -386,6 +411,7 @@ function Measurements({
     if (!initialProjectId && !selectedCustomer?.id) return
 
     let cancelled = false
+    setIsLoadingProject(true)
 
     const loadProject = async () => {
       try {
@@ -494,6 +520,10 @@ function Measurements({
         }
       } catch (error) {
         console.error('Error loading project:', error)
+      } finally {
+        if (!cancelled) {
+          setIsLoadingProject(false)
+        }
       }
     }
 
@@ -1043,7 +1073,7 @@ function Measurements({
   }
 
   const saveOrder = async () => {
-    if (isSaving) return
+    if (isSaving || isLoadingProject) return
     if (currentOrderId) {
       await updateOrder()
       return
@@ -1091,7 +1121,7 @@ function Measurements({
   }
 
   const updateOrder = async () => {
-    if (isSaving) return
+    if (isSaving || isLoadingProject) return
     const targetId = currentOrderId || initialProjectId
 
     if (!targetId) {
@@ -1328,19 +1358,28 @@ function Measurements({
             type="button"
             className="save-order-primary-btn"
             onClick={currentOrderId ? updateOrder : saveOrder}
-            disabled={isSaving}
+            disabled={isSaving || isLoadingProject}
             style={{
-              background: isSaving ? '#9ca3af' : currentOrderId ? '#10b981' : '#2563eb',
+              background:
+                isSaving || isLoadingProject
+                  ? '#9ca3af'
+                  : currentOrderId
+                    ? '#10b981'
+                    : '#2563eb',
               color: '#ffffff',
               fontWeight: 700,
               padding: '10px 18px',
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              cursor: isSaving ? 'not-allowed' : 'pointer',
+              cursor: isSaving || isLoadingProject ? 'not-allowed' : 'pointer',
             }}
           >
-            {isSaving ? '⏳ Saving...' : '💾 Save Order'}
+            {isLoadingProject
+              ? '⏳ Loading...'
+              : isSaving
+                ? '⏳ Saving...'
+                : '💾 Save Order'}
           </button>
 
           <button

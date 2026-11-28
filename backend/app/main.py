@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import customers, dashboard, measurements, passcode, projects
+from app.api.routes import customers, dashboard, measurements, passcode, projects, settings
 from app.db.init_db import init_db
 
 
@@ -59,6 +59,7 @@ app.include_router(customers.router)
 app.include_router(projects.router)
 app.include_router(measurements.router)
 app.include_router(dashboard.router)
+app.include_router(settings.router)
 
 
 @app.get("/")

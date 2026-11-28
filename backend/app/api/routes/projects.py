@@ -79,10 +79,7 @@ def generate_unique_project_serial_number(db: Session, shop: Shop) -> str:
                 except ValueError:
                     pass
 
-    next_num = 1
-
-    while next_num in existing_nums:
-        next_num += 1
+    next_num = max(existing_nums, default=0) + 1
 
     return f"PROJ-{next_num}"
 
