@@ -718,6 +718,19 @@ export function calculateSlidingWindow(
       const gDed = getGlassDeduction(152);
       const sH = Math.max(10, H - hDed);
       const sW = Math.max(10, Math.round((W + wAdd) / 2));
+      const mHDed =
+        customOverrides.meshHeightDeductionMM ??
+        customOverrides.meshDeductionMM;
+      const mWDed = customOverrides.meshWidthDeductionMM;
+      const mWAdd = customOverrides.meshWidthAdditionMM;
+
+      const mH = mHDed !== undefined ? Math.max(10, H - mHDed) : sH;
+      const mW =
+        mWDed !== undefined
+          ? Math.max(10, Math.round((W - mWDed) / 2))
+          : mWAdd !== undefined
+          ? Math.max(10, Math.round((W + mWAdd) / 2))
+          : sW;
 
       res = {
         sashHeight: sH,
@@ -730,8 +743,8 @@ export function calculateSlidingWindow(
         glassHeight: Math.max(10, sH - gDed),
         glassWidth: Math.max(10, sW - gDed),
         glassPieces: 3,
-        meshHeight: sH,
-        meshWidth: sW,
+        meshHeight: mH,
+        meshWidth: mW,
       };
       break;
     }

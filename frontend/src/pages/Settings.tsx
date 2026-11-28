@@ -201,8 +201,11 @@ const FORMULA_PRESETS: Record<WindowModelId, ModelFormulaPreset> = {
     glassDeduction: 152,
     hasMesh: true,
     defaultMeshDeduction: 0,
+    defaultMeshWidthDeduction: 3,
+    meshWidthType: 'addition',
+    meshWidthLabel: 'Mesh Width Overlap Addition ((W + X)/2)',
     formulaDescription:
-      'Sash H: H-88 | Sash W: (W+3)/2 | Mesh: Same H & W as Sash | Glass: Shutter-152 | Interlock: Sash H-5',
+      'Sash H: H-88 | Sash W: (W+3)/2 | Mesh: Same H & W as Sash (or custom) | Glass: Shutter-152 | Interlock: Sash H-5',
   },
   'open-single': {
     name: 'Single Open Casement Window',
@@ -788,7 +791,7 @@ export default function Settings({ language }: SettingsProps) {
                     }
                   />
                   <span className="settings-field-note">
-                    {selectedModel === '85-2.5' &&
+                    {(selectedModel === '85-2.5' || selectedModel === '85-3-mesh') &&
                     activeOverrides.meshHeightDeductionMM === undefined &&
                     activeOverrides.meshDeductionMM === undefined
                       ? 'Mesh Height = Same as Sash Height (or enter H - X mm)'
